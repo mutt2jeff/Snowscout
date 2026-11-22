@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SnowScout scorer tests</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+    .pass { color: #1b6e2a; } .fail { color: #b3261e; font-weight: 600; }
+    #summary { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div id="summary">Running…</div>
+  <ol id="results"></ol>
+  <script type="module">
+    // Same cases as the Android app's SnowScorerTest.kt, so both scorers stay identical.
+    import { score, fullDepthFor, addDays, Rating, RIDEABLE_FLOOR, DEFAULT_MIN_BASE_IN } from '../js/scorer.js';
+
+    const today = '2026-01-10';
+    const series = (depths, temp = 20) =>
+      depths.map((d, i) => ({ date: addDays(today, -(depths.length - 1 - i)), depth: d, tobs: temp, swe: null, tmax: null, tmin: null, prec: null }));
+
+    const tests = [];
+    const test = (name, fn) => tests.push({ name, fn });
+    const eq = (a, b, msg = '') => { if (a !== b) throw new Error(`${msg} expected ${b}, got ${a}`); };
+    const near = (a, b, tol, msg = '') => { if (Math.abs(a - b) > tol) throw new Error(`${msg} expected ${b}, got ${a}`); };
+    const ok = (c, msg) => { if (!c) throw new Error(msg); };
+
+    test('deep, cold, fresh snow is Epic', () => {
+      const s = score(series([48, 50, 54, 60]), today);
+      near(s.new72In, 12, 0.01, 'new72'); near(s.new24In, 6, 0.01, 'new24');
+      eq(s.score, 100, 'score'); eq(s.rating, Rating.EPIC, 'rating');
+    });
+    test('Lolo Pass early season (real Nov 2026 data) is not rideable', () => {
+      const s = score(series([1, 2, 6, 5, 6, 9, 10], 24.1), today);
+      eq(s.rating, Rating.NOT_RIDEABLE); ok(s.score < RIDEABLE_FLOOR, `score ${s.score} under floor`);
+      ok(s.notes[0].includes('needs about 8"'), s.notes[0]);
+    });
+    test('cold temperatures do not lift a thin base', () => {
+      const frigid = score(series([7, 7, 7, 7], -5), today);
+      const mild = score(series([7, 7, 7, 7], 30), today);
+      eq(frigid.score, mild.score); eq(frigid.rating, Rating.NOT_RIDEABLE);
+    });
+    test('fresh snow on bare ground is still not rideable', () => {
+      const s = score(series([0, 3, 8, 14]), today);
+      eq(s.rating, Rating.NOT_RIDEABLE); ok(s.notes.some((n) => n.startsWith('Building')), 'Building note');
+    });
+    test('just at the minimum is Marginal (32)', () => {
+      const s = score(series([18, 18, 18, 18], 20), today);
+      eq(s.score, 32); eq(s.rating, Rating.MARGINAL);
+    });
+    test('minimum base is adjustable', () => {
+      const d = series([20, 20, 20, 20]);
+      eq(score(d, today, 24).rating, Rating.NOT_RIDEABLE);
+      ok(score(d, today, 12).score >= RIDEABLE_FLOOR, 'rideable at 12');
+    });
+    test('Midwest 10" minimum makes 12" rideable', () => {
+      ok(score(series([12, 12, 12, 12]), today, 10).rating !== Rating.NOT_RIDEABLE, 'rideable');
+    });
+    test('backcountry minimum still ranks deeper snow higher', () => {
+      eq(fullDepthFor(48), 72);
+      const fifty = score(series([50, 50, 50, 50]), today, 48);
+      const seventy = score(series([70, 70, 70, 70]), today, 48);
+      eq(score(series([40, 40, 40, 40]), today, 48).rating, Rating.NOT_RIDEABLE);
+      ok(seventy.score > fifty.score + 20, `70" (${seventy.score}) beats 50" (${fifty.score})`);
+    });
+    test('default minimum keeps full depth at 48"', () => eq(fullDepthFor(DEFAULT_MIN_BASE_IN), 48));
+    test('settling never counts as negative snow', () => {
+      const s = score(series([40, 39, 38, 37]), today);
+      eq(s.new24In, 0); eq(s.new72In, 0);
+    });
+    test('warm temperatures lower a rideable score', () => {
+      const cold = score(series([40, 40, 40, 40], 20), today);
+      const warm = score(series([40, 40, 40, 40], 38), today);
+      ok(warm.score < cold.score, 'warm < cold'); ok(warm.notes.some((n) => n.includes('Above freezing')), 'note');
+    });
+    test('missing depth is No data', () => {
+      const s = score([{ date: today, depth: null, swe: 3, tobs: null, tmax: null, tmin: null, prec: null }], today);
+      eq(s.rating, Rating.NO_DATA); eq(s.sweIn, 3);
+    });
+    test('stale report is flagged', () => {
+      const days = series([30, 30]).map((d) => ({ ...d, date: addDays(d.date, -5) }));
+      ok(score(days, today).notes.some((n) => n.startsWith('No report since')), 'stale note');
+    });
+
+    let passed = 0;
+    const list = document.getElementById('results');
+    for (const t of tests) {
+      const li = document.createElement('li');
+      try { t.fn(); li.className = 'pass'; li.textContent = `PASS  ${t.name}`; passed++; }
+      catch (e) { li.className = 'fail'; li.textContent = `FAIL  ${t.name}: ${e.message}`; }
+      list.appendChild(li);
+    }
+    const summary = document.getElementById('summary');
+    summary.textContent = `${passed} of ${tests.length} tests passed`;
+    summary.className = passed === tests.length ? 'pass' : 'fail';
+  </script>
+</body>
+</html>
