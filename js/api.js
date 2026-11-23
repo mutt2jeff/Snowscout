@@ -12,8 +12,9 @@ import { BC_STATE, BC_TZ, bcDays, bcHours, bcTriplet, isBcTriplet } from './bc.j
 const AWDB = 'https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1';
 const NWS = 'https://api.weather.gov';
 const ECCC = 'https://api.weather.gc.ca/collections/citypageweather-realtime/items';
-const BC_STATIONS_URL = 'data/bc-stations.json';
-const BC_READINGS_URL = 'data/bc-readings.json';
+// Relative to this file (js/), not the page, so they work from any page of the site.
+const BC_STATIONS_URL = new URL('../data/bc-stations.json', import.meta.url).href;
+const BC_READINGS_URL = new URL('../data/bc-readings.json', import.meta.url).href;
 const STATION_CACHE_KEY = 'ss.stations.v2'; // v2: adds each station's time zone
 const BC_STATION_CACHE_KEY = 'ss.bcstations.v1';
 const HOUR = 3600000;
