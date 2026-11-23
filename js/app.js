@@ -74,11 +74,18 @@ const siteHref = (triplet) => `#/site/${encodeURIComponent(triplet)}`;
 // ---- Visit counts -------------------------------------------------------------------
 // Anonymous screen counts through GoatCounter (see index.html). If its script hasn't loaded
 // yet, the view is counted once it does; offline or blocked, nothing is counted.
+// Paths and titles are written to read well in the GoatCounter dashboard, e.g.
+// "/station/CA/Ebbetts Pass" titled "Ebbetts Pass, CA (SNOTEL 462)".
 
-function countView(path) {
-  const send = () => window.goatcounter?.count?.({ path, title: 'SnowScout' });
+function countView(path, title) {
+  const send = () => window.goatcounter?.count?.({ path, title });
   if (window.goatcounter?.count) return send();
   document.getElementById('goatcounter')?.addEventListener('load', send, { once: true });
+}
+
+function countStation(st) {
+  const network = api.isCanadian(st) ? 'BC snow station' : 'SNOTEL';
+  countView(`/station/${st.state}/${st.name}`, `${st.name}, ${st.state} (${network} ${st.id})`);
 }
 
 // ---- Router -------------------------------------------------------------------------
@@ -90,11 +97,11 @@ function route() {
   cleanup = null;
   const hash = location.hash || '#/';
   window.scrollTo(0, 0);
-  countView(hash.slice(1) || '/');
+  // Station pages are counted by renderDetail once the station's name is known.
   if (hash.startsWith('#/site/')) cleanup = renderDetail(decodeURIComponent(hash.slice('#/site/'.length)));
-  else if (hash === '#/sites') cleanup = renderSites();
-  else if (hash === '#/settings') cleanup = renderSettings();
-  else cleanup = renderDashboard();
+  else if (hash === '#/sites') { countView('/choose-sites', 'Choose sites (map and search)'); cleanup = renderSites(); }
+  else if (hash === '#/settings') { countView('/settings', 'Settings'); cleanup = renderSettings(); }
+  else { countView('/dashboard', 'Dashboard (my sites)'); cleanup = renderDashboard(); }
 }
 
 app.addEventListener('click', (e) => {
@@ -498,6 +505,8 @@ function renderDetail(triplet) {
       <main class="content" id="body"><div class="spinner" aria-label="Loading"></div></main>
     </div>`;
   const body = app.querySelector('#body');
+  let counted = false;
+  const countOnce = (st) => { if (!counted) { counted = true; countStation(st); } };
 
   async function load() {
     const { minBase, useHourly } = getSettings();
@@ -507,11 +516,12 @@ function renderDetail(triplet) {
       try {
         [c] = await api.conditions([triplet], minBase, useHourly);
       } catch (e) {
-        if (alive) body.innerHTML = errorBanner(e.message);
+        if (alive) { countOnce(api.stationFromTriplet(triplet)); body.innerHTML = errorBanner(e.message); }
         return;
       }
     }
     if (!alive) return;
+    countOnce(c?.station ?? api.stationFromTriplet(triplet));
     if (!c) { body.innerHTML = errorBanner('No data for this site'); return; }
     app.querySelector('#title').textContent = c.station.name;
     document.title = `${c.station.name} · SnowScout`;
