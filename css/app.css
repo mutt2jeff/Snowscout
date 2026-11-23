@@ -245,9 +245,13 @@ h1, h2, h3, p { margin: 0; }
 .chart .bar { fill: var(--primary); }
 .chart .axis { stroke: var(--border); stroke-width: 1; }
 .chart text { fill: var(--muted); font-size: 11px; text-anchor: middle; }
-.chart .temp { fill: none; stroke: var(--mine); stroke-width: 2; stroke-linejoin: round; }
-.chart .freeze { stroke: var(--mine); stroke-width: 1; stroke-dasharray: 3 3; opacity: .6; }
-.chart text.freeze-label { text-anchor: start; fill: var(--mine); font-size: 10px; }
+/* Hourly chart: softer bars so the temperature line on top of them stands out. */
+.chart .bar.soft { opacity: .45; }
+.chart .temp { fill: none; stroke: var(--mine); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.chart .temp-halo { fill: none; stroke: var(--surface); stroke-width: 6; stroke-linejoin: round; stroke-linecap: round; }
+.chart .freeze { stroke: var(--mine); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .8; }
+.chart text.freeze-label { text-anchor: start; fill: var(--mine); font-size: 10px; font-weight: 600;
+  stroke: var(--surface); stroke-width: 3px; paint-order: stroke; }
 .chart .gap { fill: var(--mine); opacity: .12; }
 .chart text.gap-label { fill: var(--mine); font-size: 11px; font-weight: 600; }
 .forecast { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }

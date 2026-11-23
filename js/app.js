@@ -651,7 +651,7 @@ function hourlyChart(hours, silent = null) {
 
   for (const h of withDepth) {
     const bh = (h.depth / max) * chartH;
-    out += `<rect class="bar" x="${(xOf(h.t) + (slot - bw) / 2).toFixed(1)}" y="${(top + chartH - bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1">` +
+    out += `<rect class="bar soft" x="${(xOf(h.t) + (slot - bw) / 2).toFixed(1)}" y="${(top + chartH - bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1">` +
       `<title>${new Date(h.t).toLocaleString('en-US', { weekday: 'short', hour: 'numeric' })}: ${Math.round(h.depth)}"${h.tobs != null ? `, ${Math.round(h.tobs)}°F` : ''}</title></rect>`;
   }
   const last = withDepth[withDepth.length - 1];
@@ -671,8 +671,11 @@ function hourlyChart(hours, silent = null) {
       if (seg && h.t - seg[seg.length - 1].t <= 1.5 * HOUR) seg.push(h);
       else segments.push([h]);
     }
+    // Each line is drawn twice: a wide outline in the card's colour, then the line itself,
+    // so it stays readable where it crosses the depth bars.
     for (const seg of segments.filter((s) => s.length >= 2)) {
-      out += `<polyline class="temp" points="${seg.map((h) => `${(xOf(h.t) + slot / 2).toFixed(1)},${yT(h.tobs).toFixed(1)}`).join(' ')}"/>`;
+      const points = seg.map((h) => `${(xOf(h.t) + slot / 2).toFixed(1)},${yT(h.tobs).toFixed(1)}`).join(' ');
+      out += `<polyline class="temp-halo" points="${points}"/><polyline class="temp" points="${points}"/>`;
     }
   }
 
