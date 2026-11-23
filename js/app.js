@@ -659,7 +659,7 @@ function avalancheCard(avy, canadian) {
     <tr><th>${esc(b.name)}</th><td>${dangerChip(b.level, bandLabel(b))}</td>
       ${f.tomorrow ? `<td>${dangerChip(f.tomorrow[i]?.level, bandLabel(f.tomorrow[i] ?? {}))}</td>` : ''}</tr>`).join('');
   const notes = [];
-  if (f.distanceMi > 0) notes.push(`This site is about ${Math.max(1, Math.round(f.distanceMi))} mi outside the ${f.zone} zone, the closest forecast.`);
+  if (f.distanceMi > 0) notes.push(`This site is about ${Math.max(1, Math.round(f.distanceMi))} mi outside this forecast area, the closest one.`);
   if (f.offSeason) notes.push(canadian ? 'Early season: daily danger ratings haven\'t started yet.' : 'This center is not issuing daily forecasts right now.');
   if (f.expired) notes.push(`This forecast expired ${shortTime(f.expiresMs)} – check the center for a newer one.`);
   const issued = f.issuedMs ? ` · issued ${new Date(f.issuedMs).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : '';
