@@ -13,23 +13,6 @@ government services, which all allow it, so there's no server to run or pay for.
 - Everything else matches: same sled score (`js/scorer.js` is a line-for-line port of
   `SnowScorer.kt`, with the same tests), map picker, site details, NWS forecast, settings.
 
-## Put it online (one time, free)
-
-Testers need a web address. Two free options; pick one.
-
-### Option 1: GitHub Pages (recommended: free, permanent, and sets up Git for later)
-
-1. Create a free account at https://github.com (you choose the username; it appears in the
-   web address).
-2. Click **+ → New repository**. Name it `snowscout`, choose **Public**, tick
-   **Add a README file**, and click **Create repository**.
-3. Click **Add file → Upload files**. Drag in **everything inside this `web` folder**
-   (the files and the `css`, `js`, `icons`, `vendor`, `tests` folders), not the `web` folder
-   itself. Click **Commit changes**.
-4. Go to **Settings → Pages**. Under *Branch*, pick **main** and **/(root)**, click **Save**.
-5. After a minute the page shows your address, like `https://YOURNAME.github.io/snowscout/`.
-   That's the link for your testers.
-
 ### Option 2: Netlify Drop (fastest)
 
 1. Go to https://app.netlify.com/drop and sign up for a free account.
