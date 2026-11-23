@@ -36,6 +36,14 @@ Testers need a web address. Two free options; pick one.
 2. Drag the whole `web` folder onto the page. You get an address like
    `https://something-random.netlify.app` (you can rename it in Site settings).
 
+## Keeping it out of search engines (beta)
+
+`index.html` and `tests/index.html` carry `<meta name="robots" content="noindex, nofollow">`,
+which tells Google and other search engines not to list the site. Delete that line when you
+want SnowScout to be findable. (A `robots.txt` file wouldn't help here: for a GitHub project
+site, search engines only read it from the top of `YOURNAME.github.io`.) The GitHub
+repository page itself is public and can't be hidden on the free plan.
+
 ## Instructions for iPhone testers
 
 1. Open the link in **Safari**.

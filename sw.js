@@ -4,7 +4,7 @@
 //
 // Bump VERSION whenever you publish changed files, so old caches get cleaned up.
 
-const VERSION = 'snowscout-web-v2'; // v2: hourly readings
+const VERSION = 'snowscout-web-v3'; // v2: hourly readings, v3: noindex
 const SHELL = [
   './',
   'index.html',
