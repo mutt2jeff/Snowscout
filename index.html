@@ -21,6 +21,11 @@
 <body>
   <div id="app"></div>
   <noscript><p style="padding:16px">SnowScout needs JavaScript turned on.</p></noscript>
+  <!-- Anonymous visit counts (GoatCounter: no cookies, no personal data). app.js counts each
+       screen itself, because the app changes screens without reloading the page. -->
+  <script>window.goatcounter = { no_onload: true };</script>
+  <script id="goatcounter" data-goatcounter="https://snowscout.goatcounter.com/count"
+          async src="https://gc.zgo.at/count.js"></script>
   <script src="vendor/leaflet/leaflet.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>

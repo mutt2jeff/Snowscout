@@ -71,6 +71,16 @@ function goBack() {
 
 const siteHref = (triplet) => `#/site/${encodeURIComponent(triplet)}`;
 
+// ---- Visit counts -------------------------------------------------------------------
+// Anonymous screen counts through GoatCounter (see index.html). If its script hasn't loaded
+// yet, the view is counted once it does; offline or blocked, nothing is counted.
+
+function countView(path) {
+  const send = () => window.goatcounter?.count?.({ path, title: 'SnowScout' });
+  if (window.goatcounter?.count) return send();
+  document.getElementById('goatcounter')?.addEventListener('load', send, { once: true });
+}
+
 // ---- Router -------------------------------------------------------------------------
 
 let cleanup = null;
@@ -80,6 +90,7 @@ function route() {
   cleanup = null;
   const hash = location.hash || '#/';
   window.scrollTo(0, 0);
+  countView(hash.slice(1) || '/');
   if (hash.startsWith('#/site/')) cleanup = renderDetail(decodeURIComponent(hash.slice('#/site/'.length)));
   else if (hash === '#/sites') cleanup = renderSites();
   else if (hash === '#/settings') cleanup = renderSettings();
@@ -744,6 +755,11 @@ function renderSettings() {
           Map: USGS The National Map.
           The web version can't send fresh-snow alerts; open it to check conditions. SnowScout doesn't assess
           avalanche danger – check your local avalanche center before riding.</p>
+
+        <h2 class="section-title">Privacy</h2>
+        <p class="small muted">SnowScout counts anonymous visits with GoatCounter, so we know how many people use
+          it and which screens they open. It uses no cookies and doesn't collect your name, location or anything
+          that identifies you. Your saved sites stay on your phone.</p>
       </main>
     </div>`;
 
