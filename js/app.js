@@ -4,7 +4,7 @@
 
 import * as api from './api.js';
 import { getSettings, updateSettings, onSettingsChange, toggleSite, isSelected } from './store.js';
-import { MIN_BASE_RANGE, RIDEABLE_FLOOR, FULL_FRESH_IN, fullDepthFor, addDays } from './scorer.js';
+import { MIN_BASE_RANGE, RIDEABLE_FLOOR, FULL_FRESH_IN, fullDepthFor, addDays, localIso } from './scorer.js';
 
 const app = document.getElementById('app');
 
@@ -35,6 +35,16 @@ const sweInches = (v) => (v == null ? '–' : `${v.toFixed(1)}"`);
 const degF = (v) => (v == null ? '–' : `${Math.round(v)}°F`);
 const isoToDate = (iso) => new Date(iso + 'T12:00:00');
 const fmtShort = (iso) => isoToDate(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+/** "As of 4:00 PM" for hourly scores (in the phone's time zone), "Daily reading · Nov 21" otherwise. */
+function readingTime(s) {
+  if (s.source === 'hourly' && s.asOfMs) {
+    const d = new Date(s.asOfMs);
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return localIso(d) === localIso() ? `As of ${time}` : `As of ${d.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+  }
+  return s.asOf ? `Daily reading · ${fmtShort(s.asOf)}` : '';
+}
 
 const badge = (s, large = false) =>
   `<div class="badge ${s.rating.key}${large ? ' lg' : ''}" role="img" aria-label="Sled score ${s.score}, ${s.rating.label}">` +
@@ -121,9 +131,11 @@ function renderDashboard() {
 
     const sort = SORTS.find((s) => s.key === dash.sort) ?? SORTS[0];
     const sorted = [...dash.sites].sort((a, b) => sort.by(b) - sort.by(a));
+    const hourlyDown = dash.sites.some((c) => c.hourlyFailed);
     body.innerHTML = `
       ${dash.loading && dash.sites.length ? '<div class="progress" aria-label="Updating"></div>' : ''}
       ${dash.error ? errorBanner(dash.error) : ''}
+      ${hourlyDown ? '<p class="small muted">Hourly readings are unavailable right now, so these use the daily readings.</p>' : ''}
       <div class="chips" role="group" aria-label="Sort">
         ${SORTS.map((s) => `<button type="button" class="chip" data-sort="${s.key}" aria-pressed="${s.key === dash.sort}">${s.label}</button>`).join('')}
       </div>
@@ -131,13 +143,15 @@ function renderDashboard() {
       ${sorted.map((c, i) => siteCard(c, i + 1)).join('')}`;
   }
 
+  const settingsKey = ({ selected, minBase, useHourly }) => JSON.stringify([selected, minBase, useHourly]);
+
   async function refresh() {
-    const { selected, minBase } = getSettings();
-    dash.key = JSON.stringify([selected, minBase]);
-    if (!selected.length) { dash.sites = []; draw(); return; }
+    const st = getSettings();
+    dash.key = settingsKey(st);
+    if (!st.selected.length) { dash.sites = []; draw(); return; }
     dash.loading = true; dash.error = null; draw();
     try {
-      const sites = await api.conditions(selected, minBase);
+      const sites = await api.conditions(st.selected, st.minBase, st.useHourly);
       if (!alive) return;
       dash.sites = sites; dash.updatedAt = new Date();
     } catch (e) {
@@ -155,8 +169,7 @@ function renderDashboard() {
   });
   app.querySelector('#refresh').addEventListener('click', refresh);
 
-  const { selected, minBase } = getSettings();
-  if (dash.key !== JSON.stringify([selected, minBase]) || !dash.updatedAt) refresh();
+  if (dash.key !== settingsKey(getSettings()) || !dash.updatedAt) refresh();
   else draw();
 
   return () => { alive = false; };
@@ -177,6 +190,7 @@ function siteCard(c, rank) {
           ${metric('Temp', degF(s.tempF))}
         </div>
         ${s.notes[0] ? `<div class="note">${esc(s.notes[0])}</div>` : ''}
+        <div class="asof">${esc(readingTime(s))}</div>
       </div>
     </a>`;
 }
@@ -343,12 +357,12 @@ function renderSites() {
   async function showPreview(st) {
     previewFor = st.triplet;
     drawMarkers();
-    const { minBase } = getSettings();
-    const cached = api.cachedConditions(st.triplet, minBase);
+    const { minBase, useHourly } = getSettings();
+    const cached = api.cachedConditions(st.triplet, minBase, useHourly);
     drawPreview(st, cached, cached ? null : 'loading');
     if (cached) return;
     try {
-      const [c] = await api.conditions([st.triplet], minBase);
+      const [c] = await api.conditions([st.triplet], minBase, useHourly);
       if (alive && previewFor === st.triplet) drawPreview(st, c, null);
     } catch (e) {
       if (alive && previewFor === st.triplet) drawPreview(st, null, e.message);
@@ -361,7 +375,8 @@ function renderSites() {
     let info;
     if (s) {
       info = `<div class="line">Base ${inches(s.depthIn)} · ${newInches(s.new72In)} in 72h · ${degF(s.tempF)}</div>` +
-        (s.notes[0] ? `<div class="note" style="margin-top:2px">${esc(s.notes[0])}</div>` : '');
+        (s.notes[0] ? `<div class="note" style="margin-top:2px">${esc(s.notes[0])}</div>` : '') +
+        `<div class="asof">${esc(readingTime(s))}</div>`;
     } else if (status === 'loading') {
       info = '<div class="small muted">Loading latest snow…</div>';
     } else {
@@ -467,12 +482,12 @@ function renderDetail(triplet) {
   const body = app.querySelector('#body');
 
   async function load() {
-    const { minBase } = getSettings();
-    let c = api.cachedConditions(triplet, minBase);
+    const { minBase, useHourly } = getSettings();
+    let c = api.cachedConditions(triplet, minBase, useHourly);
     if (!c) {
       body.innerHTML = '<div class="spinner" aria-label="Loading"></div>';
       try {
-        [c] = await api.conditions([triplet], minBase);
+        [c] = await api.conditions([triplet], minBase, useHourly);
       } catch (e) {
         if (alive) body.innerHTML = errorBanner(e.message);
         return;
@@ -524,7 +539,7 @@ function renderDetail(triplet) {
           ${badge(s, true)}
           <div>
             <div>${esc(api.stationSubtitle(c.station))}</div>
-            ${s.asOf ? `<div class="small muted">Latest report ${fmtShort(s.asOf)}</div>` : ''}
+            ${s.asOf ? `<div class="small muted">${esc(readingTime(s))}${s.source === 'hourly' ? ' (hourly)' : ''}</div>` : ''}
             <div class="notes">${s.notes.map((n) => `• ${esc(n)}`).join('<br>')}</div>
           </div>
         </div>
@@ -536,6 +551,10 @@ function renderDetail(triplet) {
           ${metric('Temp', degF(s.tempF))}
         </div>
       </section>
+
+      ${c.hours?.length ? `
+        <h2 class="section-title">Last 48 hours (hourly)</h2>
+        <section class="card chart">${hourlyChart(c.hours)}</section>` : ''}
 
       <h2 class="section-title">Snow depth – last ${c.days.length} days</h2>
       <section class="card chart">${depthChart(c.days)}</section>
@@ -591,6 +610,53 @@ function depthChart(days) {
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Snow depth over the last ${pts.length} days">${out}</svg>`;
 }
 
+/**
+ * Hourly snow depth (bars) and air temperature (line, own scale) for the last 48 hours,
+ * so riders can see today's snowfall and whether the sensor is bouncing around.
+ */
+function hourlyChart(hours) {
+  const HOUR = 3600000;
+  const latest = hours[hours.length - 1].t;
+  const pts = hours.filter((h) => h.t > latest - 48 * HOUR);
+  const withDepth = pts.filter((h) => h.depth != null);
+  if (withDepth.length < 4) return '<p class="small muted">Not enough hourly readings to chart.</p>';
+
+  const W = 340, H = 170, top = 18, bottom = 18, chartH = H - top - bottom;
+  const t0 = latest - 47 * HOUR;
+  const slot = W / 48, bw = Math.max(2, slot * 0.7);
+  const xOf = (t) => ((t - t0) / HOUR) * slot;
+  const max = Math.max(12, ...withDepth.map((h) => h.depth));
+  let out = '';
+
+  for (const h of withDepth) {
+    const bh = (h.depth / max) * chartH;
+    out += `<rect class="bar" x="${(xOf(h.t) + (slot - bw) / 2).toFixed(1)}" y="${(top + chartH - bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1">` +
+      `<title>${new Date(h.t).toLocaleString('en-US', { weekday: 'short', hour: 'numeric' })}: ${Math.round(h.depth)}"${h.tobs != null ? `, ${Math.round(h.tobs)}°F` : ''}</title></rect>`;
+  }
+  const last = withDepth[withDepth.length - 1];
+  out += `<text x="${Math.min(W - 10, xOf(last.t) + slot / 2).toFixed(1)}" y="${(top + chartH - (last.depth / max) * chartH - 4).toFixed(1)}">${Math.round(last.depth)}"</text>`;
+
+  // Temperature line on its own scale, with 32°F marked.
+  const temps = pts.filter((h) => h.tobs != null);
+  if (temps.length >= 2) {
+    const lo = Math.min(...temps.map((h) => h.tobs), 20), hi = Math.max(...temps.map((h) => h.tobs), 40);
+    const yT = (v) => top + chartH - ((v - lo) / (hi - lo)) * chartH;
+    out += `<line class="freeze" x1="0" x2="${W}" y1="${yT(32).toFixed(1)}" y2="${yT(32).toFixed(1)}"/>`;
+    out += `<text class="freeze-label" x="2" y="${(yT(32) - 3).toFixed(1)}">32°F</text>`;
+    out += `<polyline class="temp" points="${temps.map((h) => `${(xOf(h.t) + slot / 2).toFixed(1)},${yT(h.tobs).toFixed(1)}`).join(' ')}"/>`;
+  }
+
+  // Time labels every 12 hours, in the phone's time zone.
+  for (let k = 0; k <= 48; k += 12) {
+    const t = latest - (48 - k) * HOUR;
+    const x = Math.min(W - 14, Math.max(14, xOf(t) + slot / 2));
+    out += `<text x="${x.toFixed(1)}" y="${H - 3}">${new Date(t).toLocaleString('en-US', { hour: 'numeric' })}</text>`;
+  }
+  out += `<line class="axis" x1="0" x2="${W}" y1="${top + chartH}" y2="${top + chartH}"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hourly snow depth and temperature, last 48 hours">${out}</svg>` +
+    '<p class="small muted" style="margin-top:6px">Bars: snow depth · Line: air temperature</p>';
+}
+
 // ---- Settings -----------------------------------------------------------------------
 
 function renderSettings() {
@@ -607,6 +673,19 @@ function renderSettings() {
             much fell recently. Rough guide: about 10" for flat Midwest trails, 18" for mountain trail riding,
             48" before heading into the backcountry.</p>
           <input type="range" id="min-base" min="${lo}" max="${hi}" step="1" value="${s.minBase}" aria-labelledby="min-label">
+        </section>
+
+        <h2 class="section-title">Readings</h2>
+        <section class="card setting">
+          <label class="switch-row">
+            <span>
+              <b class="switch-title">Use latest hourly readings</b>
+              <span class="small muted">SNOTEL stations report every hour. On, scores use the newest reading
+                (usually under an hour old), so today's snowfall shows up right away. Off, they use the
+                once-a-day midnight reading, which NRCS checks more carefully.</span>
+            </span>
+            <input type="checkbox" id="hourly" role="switch" ${s.useHourly ? 'checked' : ''}>
+          </label>
         </section>
 
         <h2 class="section-title">How the sled score works</h2>
@@ -655,6 +734,8 @@ function renderSettings() {
     drawHelp(+slider.value);
   });
   slider.addEventListener('change', () => updateSettings({ minBase: +slider.value }));
+  const hourly = app.querySelector('#hourly');
+  hourly.addEventListener('change', () => updateSettings({ useHourly: hourly.checked }));
   return null;
 }
 

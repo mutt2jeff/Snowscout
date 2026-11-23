@@ -1,5 +1,5 @@
-// Sled score: a line-for-line port of the Android app's SnowScorer.kt.
-// Keep the two in step: same constants, same rules, same notes.
+// Sled score: a port of the Android app's SnowScorer.kt, plus (web only, for now) scoring
+// from the latest HOURLY SNOTEL readings. Keep the rules in step with Android.
 //
 // Base depth is a gate:
 //  - Below the rider's minimum base (default 18", Settings 6-48") the site is "No go"
@@ -8,6 +8,9 @@
 //      55% base depth (minimum -> max(48", minimum + 24"))
 //      30% new snow (12"+ in 72h for full marks)
 //      15% temperature (25F or colder full marks, none at 40F+)
+//
+// Daily and hourly readings only differ in how depth / new snow / temperature are
+// measured; both go through the same rate() rules below.
 
 export const DEFAULT_MIN_BASE_IN = 18;
 export const FULL_DEPTH_IN = 48;
@@ -19,6 +22,10 @@ export const RIDEABLE_FLOOR = 20;
 const DEPTH_WEIGHT = 0.55;
 const FRESH_WEIGHT = 0.30;
 const TEMP_WEIGHT = 0.15;
+
+/** Hourly readings older than this are ignored and the daily reading is used instead. */
+export const HOURLY_MAX_AGE_HOURS = 12;
+const HOUR = 3600000;
 
 export const Rating = Object.freeze({
   EPIC: { key: 'epic', label: 'Epic' },
@@ -43,12 +50,12 @@ export function addDays(iso, n) {
   return d.toISOString().slice(0, 10);
 }
 
-/** Today's date in the phone's local time zone, as 'YYYY-MM-DD'. */
-export function todayIso() {
-  const d = new Date();
+/** A date's 'YYYY-MM-DD' in the phone's local time zone. */
+export function localIso(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+export const todayIso = () => localIso();
 
 const shortDate = (iso) =>
   new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -66,40 +73,9 @@ export function ratingFor(score) {
   return Rating.NOT_RIDEABLE;
 }
 
-/**
- * @param days  [{date:'YYYY-MM-DD', depth, swe, tobs, tmax, tmin, prec}] any order; values may be null
- * @param today 'YYYY-MM-DD'
- * @param minBaseIn rider's minimum rideable base, inches
- */
-export function score(days, today = todayIso(), minBaseIn = DEFAULT_MIN_BASE_IN) {
-  const sorted = [...days].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const lastWith = (key) => [...sorted].reverse().find((d) => d[key] != null);
-  const latest = lastWith('depth');
-  const latestSwe = lastWith('swe')?.swe ?? null;
-
-  if (!latest) {
-    const last = sorted[sorted.length - 1];
-    return {
-      score: 0, rating: Rating.NO_DATA,
-      depthIn: null, new24In: null, new72In: null,
-      sweIn: latestSwe, tempF: last ? (last.tobs ?? last.tmax ?? null) : null,
-      asOf: last?.date ?? null,
-      notes: ['No snow depth reported recently'],
-    };
-  }
-
-  const depth = latest.depth;
-  const byDate = new Map(sorted.map((d) => [d.date, d]));
-  const newSince = (daysBack) => {
-    const prior = byDate.get(addDays(latest.date, -daysBack))?.depth;
-    return prior == null ? null : Math.max(0, depth - prior);
-  };
-  const new24 = newSince(1);
-  const new72 = newSince(3);
-  const swe = latest.swe ?? latestSwe;
-  const temp = latest.tobs ?? latest.tmax ?? null;
+/** The scoring rules. Inputs in inches / °F; any may be null except depth. */
+export function rate({ depth, new24, new72, temp }, minBaseIn = DEFAULT_MIN_BASE_IN) {
   const minBase = Math.max(1, minBaseIn);
-
   const notes = [];
   let value;
 
@@ -126,18 +102,137 @@ export function score(days, today = todayIso(), minBaseIn = DEFAULT_MIN_BASE_IN)
     if (temp != null && temp > 32) notes.push('Above freezing – heavy, wet snow');
   }
 
-  if (daysBetween(latest.date, today) > 2) notes.push(`No report since ${shortDate(latest.date)}`);
+  const score = clamp(value, 0, 100);
+  return { score, rating: depth < minBase ? Rating.NOT_RIDEABLE : ratingFor(score), notes };
+}
 
-  const clamped = clamp(value, 0, 100);
+// ---- Daily readings (same behaviour as the Android app) -----------------------------
+
+/**
+ * @param days  [{date:'YYYY-MM-DD', depth, swe, tobs, tmax, tmin, prec}] any order; values may be null
+ * @param today 'YYYY-MM-DD'
+ * @param minBaseIn rider's minimum rideable base, inches
+ */
+export function score(days, today = todayIso(), minBaseIn = DEFAULT_MIN_BASE_IN) {
+  const sorted = [...days].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const lastWith = (key) => [...sorted].reverse().find((d) => d[key] != null);
+  const latest = lastWith('depth');
+  const latestSwe = lastWith('swe')?.swe ?? null;
+
+  if (!latest) {
+    const last = sorted[sorted.length - 1];
+    return {
+      score: 0, rating: Rating.NO_DATA, source: 'daily',
+      depthIn: null, new24In: null, new72In: null,
+      sweIn: latestSwe, tempF: last ? (last.tobs ?? last.tmax ?? null) : null,
+      asOf: last?.date ?? null, asOfMs: null,
+      notes: ['No snow depth reported recently'],
+    };
+  }
+
+  const depth = latest.depth;
+  const byDate = new Map(sorted.map((d) => [d.date, d]));
+  const newSince = (daysBack) => {
+    const prior = byDate.get(addDays(latest.date, -daysBack))?.depth;
+    return prior == null ? null : Math.max(0, depth - prior);
+  };
+  const new24 = newSince(1);
+  const new72 = newSince(3);
+  const swe = latest.swe ?? latestSwe;
+  const temp = latest.tobs ?? latest.tmax ?? null;
+
+  const r = rate({ depth, new24, new72, temp }, minBaseIn);
+  if (daysBetween(latest.date, today) > 2) r.notes.push(`No report since ${shortDate(latest.date)}`);
+
   return {
-    score: clamped,
-    rating: depth < minBase ? Rating.NOT_RIDEABLE : ratingFor(clamped),
-    depthIn: depth,
-    new24In: new24,
-    new72In: new72,
-    sweIn: swe,
-    tempF: temp,
-    asOf: latest.date,
-    notes,
+    ...r, source: 'daily',
+    depthIn: depth, new24In: new24, new72In: new72, sweIn: swe, tempF: temp,
+    asOf: latest.date, asOfMs: null,
+  };
+}
+
+// ---- Hourly readings ----------------------------------------------------------------
+
+/**
+ * SNOTEL hourly timestamp ('YYYY-MM-DD HH:MM', station standard time, tz hours from UTC)
+ * -> ms since epoch, or null if it doesn't parse.
+ */
+export function stationTimeToMs(stamp, tz) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(stamp));
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - tz * HOUR : null;
+}
+
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/**
+ * Current conditions from hourly readings, or null if there are none recent enough.
+ *
+ * The snow-depth sensor is ultrasonic and can bounce an inch or two between hours
+ * (falling snow, wind), so depth is the median of the readings in a 3-hour window.
+ * One bad reading can't swing the score.
+ *
+ * @param hours [{t: ms since epoch, depth, tobs, swe}]
+ * @param nowMs current time, ms since epoch
+ */
+export function currentFromHourly(hours, nowMs = Date.now()) {
+  const withDepth = hours
+    .filter((h) => h.depth != null && h.t <= nowMs + HOUR)
+    .sort((a, b) => a.t - b.t);
+  if (!withDepth.length) return null;
+  const latestT = withDepth[withDepth.length - 1].t;
+  if (nowMs - latestT > HOURLY_MAX_AGE_HOURS * HOUR) return null;
+
+  // Depth around a moment: median of readings within the 3 hours ending at `t` (+1h slack
+  // for the older baselines, since stations occasionally skip an hour).
+  const depthAround = (t, before, after) => {
+    const xs = withDepth.filter((h) => h.t >= t - before && h.t <= t + after).map((h) => h.depth);
+    return xs.length ? median(xs) : null;
+  };
+  const depth = depthAround(latestT, 2 * HOUR, 0);
+  const ago = (hrs) => {
+    const d = depthAround(latestT - hrs * HOUR, HOUR, HOUR);
+    return d == null ? null : Math.max(0, depth - d);
+  };
+
+  const lastOf = (key, maxAgeHrs) => {
+    const h = [...hours].sort((a, b) => b.t - a.t).find((x) => x[key] != null && latestT - x.t <= maxAgeHrs * HOUR);
+    return h ? h[key] : null;
+  };
+
+  return {
+    depth,
+    new24: ago(24),
+    new72: ago(72),
+    temp: lastOf('tobs', 3),
+    swe: lastOf('swe', 12),
+    asOfMs: latestT,
+  };
+}
+
+/**
+ * Score from hourly readings, falling back to the daily score when there are no
+ * recent hourly readings. Missing hourly pieces (temperature, 72h baseline) fall back
+ * to the daily values.
+ */
+export function scoreHourly(hours, days, nowMs = Date.now(), minBaseIn = DEFAULT_MIN_BASE_IN) {
+  const daily = score(days, localIso(new Date(nowMs)), minBaseIn);
+  const cur = currentFromHourly(hours, nowMs);
+  if (!cur) return daily;
+
+  const inputs = {
+    depth: cur.depth,
+    new24: cur.new24 ?? daily.new24In,
+    new72: cur.new72 ?? daily.new72In,
+    temp: cur.temp ?? daily.tempF,
+  };
+  return {
+    ...rate(inputs, minBaseIn), source: 'hourly',
+    depthIn: inputs.depth, new24In: inputs.new24, new72In: inputs.new72,
+    sweIn: cur.swe ?? daily.sweIn, tempF: inputs.temp,
+    asOf: localIso(new Date(cur.asOfMs)), asOfMs: cur.asOfMs,
   };
 }

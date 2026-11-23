@@ -15,7 +15,8 @@
   <ol id="results"></ol>
   <script type="module">
     // Same cases as the Android app's SnowScorerTest.kt, so both scorers stay identical.
-    import { score, fullDepthFor, addDays, Rating, RIDEABLE_FLOOR, DEFAULT_MIN_BASE_IN } from '../js/scorer.js';
+    import { score, fullDepthFor, addDays, Rating, RIDEABLE_FLOOR, DEFAULT_MIN_BASE_IN,
+             currentFromHourly, scoreHourly, stationTimeToMs } from '../js/scorer.js';
 
     const today = '2026-01-10';
     const series = (depths, temp = 20) =>
@@ -82,6 +83,52 @@
     test('stale report is flagged', () => {
       const days = series([30, 30]).map((d) => ({ ...d, date: addDays(d.date, -5) }));
       ok(score(days, today).notes.some((n) => n.startsWith('No report since')), 'stale note');
+    });
+
+    // ---- Hourly readings (web only so far) ------------------------------------------
+    const HOUR = 3600000;
+    const NOW = Date.UTC(2026, 10, 23, 0, 30); // 4:30 PM PST, Nov 22
+    // Hourly series ending at NOW minus `lagHours`, oldest first; depths given newest-last.
+    const hourly = (depths, { temp = 20, lagHours = 0 } = {}) => depths.map((d, i) => ({
+      t: NOW - lagHours * HOUR - (depths.length - 1 - i) * HOUR, depth: d, tobs: temp, swe: 1.5,
+    }));
+    const flat = (n, v) => Array(n).fill(v);
+
+    test('station time converts from Pacific Standard Time', () => {
+      eq(stationTimeToMs('2026-11-22 15:00', -8), Date.UTC(2026, 10, 22, 23, 0));
+      eq(stationTimeToMs('2026-11-22 15:00', -9), Date.UTC(2026, 10, 23, 0, 0), 'Alaska');
+      eq(stationTimeToMs('garbage', -8), null);
+    });
+    test('hourly depth ignores a single bad sensor reading', () => {
+      const cur = currentFromHourly(hourly([...flat(24, 10), 10, 10, 18]), NOW);
+      eq(cur.depth, 10, 'median of 10, 10, 18');
+    });
+    test('hourly new snow is measured over a true 24 hours', () => {
+      // 6" until a bit over 24h ago, then 9" for the last 24 readings
+      const cur = currentFromHourly(hourly([...flat(11, 6), ...flat(24, 9)]), NOW);
+      eq(cur.depth, 9); eq(cur.new24, 3);
+    });
+    test('hourly scores use the same rules as daily (18" cold = 32)', () => {
+      const s = scoreHourly(hourly(flat(80, 18)), [], NOW, 18); // 80h of steady 18", 20°F
+      eq(s.source, 'hourly'); eq(s.score, 32); eq(s.rating, Rating.MARGINAL);
+    });
+    test('stale hourly readings fall back to the daily reading', () => {
+      const days = series([30, 30, 30, 30]);
+      const s = scoreHourly(hourly(flat(30, 40), { lagHours: 15 }), days, NOW, 18);
+      eq(s.source, 'daily'); eq(s.depthIn, 30);
+    });
+    test("today's snow shows up hourly before the daily reading has it", () => {
+      // Daily (midnight) says 6"; hourly shows it snowed to 9" this afternoon.
+      const days = [{ date: '2026-11-22', depth: 6, tobs: 18, swe: 1.4, tmax: null, tmin: null, prec: null },
+                    { date: '2026-11-21', depth: 6, tobs: 20, swe: 1.4, tmax: null, tmin: null, prec: null }];
+      const hrs = hourly([...flat(30, 6), 7, 8, 9, 9, 9]);
+      const d = scoreHourly([], days, NOW, 18), h = scoreHourly(hrs, days, NOW, 18);
+      eq(d.depthIn, 6, 'daily'); eq(h.depthIn, 9, 'hourly'); eq(h.new24In, 3, 'hourly 24h');
+    });
+    test('missing hourly temperature falls back to the daily one', () => {
+      const days = [{ date: '2026-11-22', depth: 20, tobs: 15, swe: null, tmax: null, tmin: null, prec: null }];
+      const s = scoreHourly(hourly(flat(10, 20)).map((h) => ({ ...h, tobs: null })), days, NOW, 18);
+      eq(s.source, 'hourly'); eq(s.tempF, 15);
     });
 
     let passed = 0;

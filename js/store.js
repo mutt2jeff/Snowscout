@@ -24,7 +24,8 @@ export function save(key, value) {
 const SETTINGS_KEY = 'ss.settings.v1';
 const listeners = new Set();
 
-const defaults = () => ({ selected: [], minBase: DEFAULT_MIN_BASE_IN });
+// useHourly: score from the latest hourly SNOTEL readings instead of the midnight daily one.
+const defaults = () => ({ selected: [], minBase: DEFAULT_MIN_BASE_IN, useHourly: true });
 
 let settings = { ...defaults(), ...load(SETTINGS_KEY, {}) };
 

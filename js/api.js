@@ -1,12 +1,13 @@
 // Data access: NRCS SNOTEL (AWDB), NWS forecasts. All three government services send
 // "Access-Control-Allow-Origin: *", so the browser calls them directly: no server needed.
 
-import { addDays, score, todayIso } from './scorer.js';
+import { addDays, score, scoreHourly, stationTimeToMs, todayIso } from './scorer.js';
 import { load, save } from './store.js';
 
 const AWDB = 'https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1';
 const NWS = 'https://api.weather.gov';
-const STATION_CACHE_KEY = 'ss.stations.v1';
+const STATION_CACHE_KEY = 'ss.stations.v2'; // v2: adds each station's time zone
+const HOUR = 3600000;
 const STATION_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const HISTORY_DAYS = 14;
 const BATCH = 40;
@@ -36,8 +37,13 @@ function toStation(s) {
     elev: s.elevation != null ? Math.round(s.elevation) : null,
     lat: s.latitude ?? null,
     lon: s.longitude ?? null,
+    // Hours from UTC that the station's readings are stamped in. SNOTEL uses standard
+    // time all year: -8 (Pacific) for every lower-48 station, -9 for Alaska.
+    tz: s.dataTimeZone ?? defaultTz(s.stateCode),
   };
 }
+
+const defaultTz = (state) => (state === 'AK' ? -9 : -8);
 
 /** All active SNOTEL stations (~900). Cached on the phone for a week. */
 export function allStations() {
@@ -65,7 +71,7 @@ export function allStations() {
 
 export function stationFromTriplet(triplet) {
   const [id, state] = triplet.split(':');
-  return { triplet, id, name: `Site ${id}`, state: state || '', county: null, elev: null, lat: null, lon: null };
+  return { triplet, id, name: `Site ${id}`, state: state || '', county: null, elev: null, lat: null, lon: null, tz: defaultTz(state) };
 }
 
 export function stationSubtitle(st) {
@@ -98,37 +104,82 @@ function toDays(stationData) {
   return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
-/** Latest conditions for each triplet, best score first. */
-export async function conditions(triplets, minBase) {
+const HOURLY_KEYS = { SNWD: 'depth', TOBS: 'tobs', WTEQ: 'swe' };
+
+/** Hourly readings -> [{t (ms since epoch), depth, tobs, swe}], oldest first. */
+function toHours(stationData, tz) {
+  const byT = new Map();
+  for (const el of stationData?.data ?? []) {
+    const key = HOURLY_KEYS[el.stationElement?.elementCode];
+    if (!key) continue;
+    for (const v of el.values ?? []) {
+      // Stamped in station standard time (tz hours from UTC): convert to a real instant.
+      const t = stationTimeToMs(v.date, tz);
+      if (t == null) continue;
+      const h = byT.get(t) ?? { t, depth: null, tobs: null, swe: null };
+      h[key] = v.value ?? null;
+      byT.set(t, h);
+    }
+  }
+  return [...byT.values()].sort((a, b) => a.t - b.t);
+}
+
+function chunked(list) {
+  const chunks = [];
+  for (let i = 0; i < list.length; i += BATCH) chunks.push(list.slice(i, i + BATCH));
+  return chunks;
+}
+
+// Triplets are only digits, capitals and colons, which are safe in a query string as-is.
+const dataUrl = (triplets, elements, duration, begin, end) =>
+  `${AWDB}/data?stationTriplets=${triplets.join(',')}&elements=${elements}` +
+  `&duration=${duration}&beginDate=${begin}&endDate=${end}`;
+
+/**
+ * Latest conditions for each triplet, best score first.
+ * With useHourly, the score uses the latest hourly readings (falling back to daily per
+ * site when a station has no recent hourly data, or for everything if the hourly
+ * request fails). Daily readings are always fetched too, for the chart and table.
+ */
+export async function conditions(triplets, minBase, useHourly = false) {
   if (!triplets.length) return [];
   const stations = await allStations().catch(() => []);
   const byTriplet = new Map(stations.map((s) => [s.triplet, s]));
   const today = todayIso();
   const begin = addDays(today, -HISTORY_DAYS);
 
-  const chunks = [];
-  for (let i = 0; i < triplets.length; i += BATCH) chunks.push(triplets.slice(i, i + BATCH));
-  const responses = (await Promise.all(chunks.map((c) =>
-    // Triplets are only digits, capitals and colons, which are safe in a query string as-is.
-    getJson(`${AWDB}/data?stationTriplets=${c.join(',')}` +
-      `&elements=SNWD,WTEQ,TOBS,TMAX,TMIN,PREC&duration=DAILY&beginDate=${begin}&endDate=${today}`),
-  ))).flat();
-  const dataByTriplet = new Map(responses.map((r) => [r.stationTriplet, r]));
+  const dailyReq = Promise.all(chunked(triplets).map((c) =>
+    getJson(dataUrl(c, 'SNWD,WTEQ,TOBS,TMAX,TMIN,PREC', 'DAILY', begin, today)),
+  )).then((r) => r.flat());
+  // 3 days back covers the 72h baseline; "tomorrow" covers phones in time zones ahead of
+  // the stations' Pacific Standard Time.
+  const hourlyReq = useHourly
+    ? Promise.all(chunked(triplets).map((c) =>
+      getJson(dataUrl(c, 'SNWD,TOBS,WTEQ', 'HOURLY', addDays(today, -3), addDays(today, 1))),
+    )).then((r) => r.flat()).catch(() => null)
+    : Promise.resolve(null);
+
+  const [daily, hourly] = await Promise.all([dailyReq, hourlyReq]);
+  const dailyBy = new Map(daily.map((r) => [r.stationTriplet, r]));
+  const hourlyBy = hourly ? new Map(hourly.map((r) => [r.stationTriplet, r])) : null;
+  const now = Date.now();
 
   const result = triplets.map((t) => {
     const station = byTriplet.get(t) ?? stationFromTriplet(t);
-    const days = toDays(dataByTriplet.get(t));
-    const c = { station, days, score: score(days, today, minBase), minBase };
+    const days = toDays(dailyBy.get(t));
+    const hours = hourlyBy ? toHours(hourlyBy.get(t), station.tz ?? defaultTz(station.state)) : [];
+    const s = useHourly ? scoreHourly(hours, days, now, minBase) : score(days, today, minBase);
+    const c = { station, days, hours, score: s, minBase, useHourly, hourlyFailed: useHourly && !hourly };
     conditionsCache.set(t, c);
     return c;
   });
   return result.sort((a, b) => b.score.score - a.score.score);
 }
 
-/** Cached conditions, only if scored with the same minimum base. */
-export function cachedConditions(triplet, minBase) {
+/** Cached conditions, only if scored with the same settings. */
+export function cachedConditions(triplet, minBase, useHourly = false) {
   const c = conditionsCache.get(triplet);
-  return c && c.minBase === minBase ? c : null;
+  return c && c.minBase === minBase && c.useHourly === useHourly ? c : null;
 }
 
 // ---- Forecast -----------------------------------------------------------------------
