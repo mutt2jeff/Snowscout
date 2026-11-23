@@ -4,7 +4,7 @@
 
 import * as api from './api.js';
 import { getSettings, updateSettings, onSettingsChange, toggleSite, isSelected } from './store.js';
-import { MIN_BASE_RANGE, RIDEABLE_FLOOR, FULL_FRESH_IN, fullDepthFor, addDays, localIso } from './scorer.js';
+import { MIN_BASE_RANGE, RIDEABLE_FLOOR, FULL_FRESH_IN, fullDepthFor, addDays, shortTime } from './scorer.js';
 
 const app = document.getElementById('app');
 
@@ -42,9 +42,9 @@ const fmtShort = (iso) => isoToDate(iso).toLocaleDateString('en-US', { month: 's
  */
 function readingTime(s, c = {}) {
   if (s.source === 'hourly' && s.asOfMs) {
-    const d = new Date(s.asOfMs);
-    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    const when = localIso(d) === localIso() ? time : `${d.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+    const when = shortTime(s.asOfMs);
+    // Silent station (snowed in / no signal): say so plainly, it's not current.
+    if (s.silent) return s.silent.sensorOnly ? `Depth sensor silent since ${when}` : `Last report ${when} · no signal`;
     return `As of ${when}${c.hourlyFromSave ? ' (saved)' : ''}`;
   }
   return s.asOf ? `Daily reading · ${fmtShort(s.asOf)}${c.dailyFromSave ? ' (saved)' : ''}` : '';
@@ -195,7 +195,7 @@ function siteCard(c, rank) {
           ${metric('Temp', degF(s.tempF))}
         </div>
         ${s.notes[0] ? `<div class="note">${esc(s.notes[0])}</div>` : ''}
-        <div class="asof">${esc(readingTime(s, c))}</div>
+        <div class="asof${s.silent ? ' warn' : ''}">${esc(readingTime(s, c))}</div>
       </div>
     </a>`;
 }
@@ -381,7 +381,7 @@ function renderSites() {
     if (s) {
       info = `<div class="line">Base ${inches(s.depthIn)} · ${newInches(s.new72In)} in 72h · ${degF(s.tempF)}</div>` +
         (s.notes[0] ? `<div class="note" style="margin-top:2px">${esc(s.notes[0])}</div>` : '') +
-        `<div class="asof">${esc(readingTime(s, c))}</div>`;
+        `<div class="asof${s.silent ? ' warn' : ''}">${esc(readingTime(s, c))}</div>`;
     } else if (status === 'loading') {
       info = '<div class="small muted">Loading latest snow…</div>';
     } else {
@@ -544,7 +544,7 @@ function renderDetail(triplet) {
           ${badge(s, true)}
           <div>
             <div>${esc(api.stationSubtitle(c.station))}</div>
-            ${s.asOf ? `<div class="small muted">${esc(readingTime(s, c))}${s.source === 'hourly' ? ' · hourly' : ''}</div>` : ''}
+            ${s.asOf ? `<div class="small ${s.silent ? 'asof warn' : 'muted'}">${esc(readingTime(s, c))}${s.source === 'hourly' && !s.silent ? ' · hourly' : ''}</div>` : ''}
             <div class="notes">${s.notes.map((n) => `• ${esc(n)}`).join('<br>')}</div>
           </div>
         </div>
@@ -559,7 +559,7 @@ function renderDetail(triplet) {
 
       ${c.hours?.length ? `
         <h2 class="section-title">Last 48 hours (hourly)</h2>
-        <section class="card chart">${hourlyChart(c.hours)}</section>` : ''}
+        <section class="card chart">${hourlyChart(c.hours, s.silent)}</section>` : ''}
 
       <h2 class="section-title">Snow depth – last ${c.days.length} days</h2>
       <section class="card chart">${depthChart(c.days)}</section>
@@ -618,10 +618,13 @@ function depthChart(days) {
 /**
  * Hourly snow depth (bars) and air temperature (line, own scale) for the last 48 hours,
  * so riders can see today's snowfall and whether the sensor is bouncing around.
+ * Hours with no data (empty readings) are left as gaps; if the station has gone silent,
+ * the chart runs up to now with the silent stretch shaded "No signal".
  */
-function hourlyChart(hours) {
+function hourlyChart(hours, silent = null) {
   const HOUR = 3600000;
-  const latest = hours[hours.length - 1].t;
+  const lastRow = hours[hours.length - 1].t;
+  const latest = silent ? Math.max(lastRow, Math.floor((Date.now() - HOUR) / HOUR) * HOUR) : lastRow;
   const pts = hours.filter((h) => h.t > latest - 48 * HOUR);
   const withDepth = pts.filter((h) => h.depth != null);
   if (withDepth.length < 4) return '<p class="small muted">Not enough hourly readings to chart.</p>';
@@ -632,6 +635,14 @@ function hourlyChart(hours) {
   const xOf = (t) => ((t - t0) / HOUR) * slot;
   const max = Math.max(12, ...withDepth.map((h) => h.depth));
   let out = '';
+
+  if (silent) {
+    const gx = Math.max(0, xOf(silent.sinceMs) + slot);
+    if (gx < W - 2) {
+      out += `<rect class="gap" x="${gx.toFixed(1)}" y="${top}" width="${(W - gx).toFixed(1)}" height="${chartH}"/>`;
+      if (W - gx > 44) out += `<text class="gap-label" x="${((gx + W) / 2).toFixed(1)}" y="${top + chartH / 2}">No signal</text>`;
+    }
+  }
 
   for (const h of withDepth) {
     const bh = (h.depth / max) * chartH;
@@ -648,7 +659,16 @@ function hourlyChart(hours) {
     const yT = (v) => top + chartH - ((v - lo) / (hi - lo)) * chartH;
     out += `<line class="freeze" x1="0" x2="${W}" y1="${yT(32).toFixed(1)}" y2="${yT(32).toFixed(1)}"/>`;
     out += `<text class="freeze-label" x="2" y="${(yT(32) - 3).toFixed(1)}">32°F</text>`;
-    out += `<polyline class="temp" points="${temps.map((h) => `${(xOf(h.t) + slot / 2).toFixed(1)},${yT(h.tobs).toFixed(1)}`).join(' ')}"/>`;
+    // Break the line wherever hours are missing, so a gap isn't drawn as real data.
+    const segments = [];
+    for (const h of temps) {
+      const seg = segments[segments.length - 1];
+      if (seg && h.t - seg[seg.length - 1].t <= 1.5 * HOUR) seg.push(h);
+      else segments.push([h]);
+    }
+    for (const seg of segments.filter((s) => s.length >= 2)) {
+      out += `<polyline class="temp" points="${seg.map((h) => `${(xOf(h.t) + slot / 2).toFixed(1)},${yT(h.tobs).toFixed(1)}`).join(' ')}"/>`;
+    }
   }
 
   // Time labels every 12 hours, in the phone's time zone.

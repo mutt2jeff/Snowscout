@@ -17,7 +17,7 @@
   <script type="module">
     // Same cases as the Android app's SnowScorerTest.kt, so both scorers stay identical.
     import { score, fullDepthFor, addDays, Rating, RIDEABLE_FLOOR, DEFAULT_MIN_BASE_IN,
-             currentFromHourly, scoreHourly, stationTimeToMs, dailyReadingMs } from '../js/scorer.js';
+             currentFromHourly, scoreHourly, stationTimeToMs, dailyReadingMs, silenceNote } from '../js/scorer.js';
     import { mergeHours } from '../js/readings.js';
 
     const today = '2026-01-10';
@@ -133,8 +133,51 @@
       const s = scoreHourly(hourly([...flat(30, 6), 8, 9, 9, 9], { lagHours: 6 }), days, NOW, 18);
       eq(s.source, 'hourly'); eq(s.depthIn, 9); eq(s.asOfMs, NOW - 6 * HOUR, 'shows the time of the last saved reading');
     });
-    test('hourly readings over 48 hours old are never used', () => {
-      eq(currentFromHourly(hourly(flat(10, 30), { lagHours: 50 }), NOW), null);
+    test('hourly readings over a week old are never used', () => {
+      eq(currentFromHourly(hourly(flat(10, 30), { lagHours: 170 }), NOW), null);
+    });
+
+    // ---- Silent stations (heavy snow blocks the signal) -------------------------------
+    // NRCS keeps the hourly rows but the values come back empty once a station goes offline.
+    const empties = (n) => Array.from({ length: n }, (_, i) => ({ t: NOW - (n - 1 - i) * HOUR, depth: null, tobs: null, swe: null }));
+
+    test('empty readings after a station goes offline: last real report is used and flagged', () => {
+      // real readings until 8h ago, then 8 empty hours up to now
+      const hrs = [...hourly([...flat(20, 7), 8, 9, 9, 9], { lagHours: 8 }), ...empties(8)];
+      const s = scoreHourly(hrs, [dayRow('2026-11-21', 7)], NOW, 18);
+      eq(s.source, 'hourly'); eq(s.depthIn, 9, 'not zero, not gone');
+      ok(s.silent && s.silent.hours === 8 && !s.silent.sensorOnly, JSON.stringify(s.silent));
+      ok(s.notes[0].startsWith('No report since'), s.notes[0]);
+    });
+    test('normal 1-2 hour posting delay is not treated as silent', () => {
+      const s = scoreHourly(hourly(flat(30, 20), { lagHours: 2 }), [], NOW, 18);
+      eq(s.silent, null); ok(!s.notes.some((n) => n.startsWith('No report')), 'no note');
+    });
+    test('depth sensor silent while temperature keeps reporting', () => {
+      const hrs = [...hourly(flat(20, 15), { lagHours: 6 }),
+        ...Array.from({ length: 6 }, (_, i) => ({ t: NOW - (5 - i) * HOUR, depth: null, tobs: 22, swe: 3.1 }))];
+      const s = scoreHourly(hrs, [], NOW, 18);
+      ok(s.silent?.sensorOnly, 'sensorOnly'); ok(s.notes[0].startsWith('Snow-depth sensor silent'), s.notes[0]);
+    });
+    test('a station silent for 3 days still shows its last report (newer than its daily)', () => {
+      const hrs = hourly(flat(30, 25), { lagHours: 72 });
+      const s = scoreHourly(hrs, [dayRow('2026-11-18', 22)], NOW, 18);
+      eq(s.source, 'hourly'); eq(s.depthIn, 25); eq(s.silent.hours, 72);
+    });
+    test('new snow is measured across a gap in the data', () => {
+      // 6" until 30h ago, nothing from 30h to 20h ago, then 10"
+      const before = hourly(flat(20, 6), { lagHours: 30 });
+      const after = hourly(flat(21, 10));
+      eq(currentFromHourly([...before, ...after], NOW).new24, 4, 'baseline = last reading before the gap');
+    });
+    test('NWS storm warning makes the silent-station note say so', () => {
+      const note = silenceNote({ sinceMs: NOW - 5 * HOUR, hours: 5, sensorOnly: false }, { alert: 'Winter Storm Warning', snowNow: true }, NOW);
+      ok(note.includes('Winter Storm Warning') && note.includes('Expect more snow than shown'), note);
+    });
+    test('saved readings survive a long outage of empty hours', () => {
+      const savedH = hourly(flat(40, 30), { lagHours: 100 });   // last real report 100h ago
+      const merged = mergeHours(savedH, empties(24));            // NRCS now sends only empty hours
+      eq(merged.length, 40, 'all real readings kept, empty hours dropped');
     });
     test("today's snow shows up hourly before the daily reading has it", () => {
       // Daily (midnight) says 6"; hourly shows it snowed to 9" this afternoon.
@@ -147,7 +190,7 @@
       const t = (h) => NOW - h * HOUR;
       const savedH = [{ t: t(90), depth: 1 }, { t: t(2), depth: 5 }, { t: t(1), depth: 6 }];
       const freshH = [{ t: t(1), depth: 7 }, { t: t(0), depth: 8 }];
-      const merged = mergeHours(savedH, freshH, NOW);
+      const merged = mergeHours(savedH, freshH);
       eq(merged.map((h) => h.depth).join(','), '5,7,8', 'dropped 90h-old, replaced t-1h, added t-0');
     });
     test('missing hourly temperature falls back to the daily one', () => {

@@ -11,13 +11,24 @@ const HOUR = 3600000;
 export const KEEP_HOURS = 80;     // covers the 72-hour new-snow baseline
 const FORGET_AFTER_DAYS = 14;     // drop sites nobody has looked at in two weeks
 
-/** Merge saved and freshly downloaded hourly readings; fresh values win, old ones are dropped. */
-export function mergeHours(saved = [], fresh = [], nowMs = Date.now(), keepHours = KEEP_HOURS) {
-  const byT = new Map(saved.map((h) => [h.t, h]));
-  for (const h of fresh) byT.set(h.t, h);
-  return [...byT.values()]
-    .filter((h) => h.t >= nowMs - keepHours * HOUR)
-    .sort((a, b) => a.t - b.t);
+/**
+ * Merge saved and freshly downloaded hourly readings; fresh values win (NRCS fills in
+ * hours a snowed-in station couldn't send once its signal gets out again).
+ *
+ * A station that can't get its signal out still gets hourly rows from NRCS, just with
+ * empty values. Those empty hours carry no information and are dropped, and the ~3 days
+ * kept are counted back from the NEWEST REAL READING, not from now: in a long storm the
+ * station's last reports must survive so the app can keep showing them.
+ */
+export function mergeHours(saved = [], fresh = [], keepHours = KEEP_HOURS) {
+  const hasData = (h) => h.depth != null || h.tobs != null || h.swe != null;
+  // Saved copies from the previous version may still hold empty hours: drop them too.
+  const byT = new Map(saved.filter(hasData).map((h) => [h.t, h]));
+  for (const h of fresh) if (hasData(h)) byT.set(h.t, h); // an empty hour never erases a real one
+  const all = [...byT.values()].sort((a, b) => a.t - b.t);
+  if (!all.length) return all;
+  const newest = all[all.length - 1].t;
+  return all.filter((h) => h.t >= newest - keepHours * HOUR);
 }
 
 let memo = null;

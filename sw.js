@@ -8,7 +8,7 @@
 //
 // Bump VERSION whenever you publish changed files, so old saved copies get cleaned up.
 
-const VERSION = 'snowscout-web-v5'; // v2 hourly, v3 noindex, v4 network-first, v5 saved readings + retries
+const VERSION = 'snowscout-web-v6'; // v2 hourly, v3 noindex, v4 network-first, v5 saved readings + retries, v6 silent stations
 const NETWORK_TIMEOUT_MS = 4000;
 const SHELL = [
   './',

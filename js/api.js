@@ -1,7 +1,7 @@
 // Data access: NRCS SNOTEL (AWDB), NWS forecasts. All three government services send
 // "Access-Control-Allow-Origin: *", so the browser calls them directly: no server needed.
 
-import { addDays, score, scoreHourly, stationTimeToMs, todayIso } from './scorer.js';
+import { addDays, score, scoreHourly, silenceNote, stationTimeToMs, todayIso } from './scorer.js';
 import { load, save } from './store.js';
 import { mergeHours, saveReadings, savedReadings } from './readings.js';
 
@@ -215,7 +215,7 @@ export async function conditions(triplets, minBase, useHourly = false) {
 
     let hours = prev?.hours ?? [];
     const hourlyFailed = !!hourly && hourly.failed.has(t);
-    if (hourly && !hourlyFailed) hours = mergeHours(hours, toHours(hourly.data.get(t), tz), now);
+    if (hourly && !hourlyFailed) hours = mergeHours(hours, toHours(hourly.data.get(t), tz));
 
     updates[t] = { days, hours };
     if (days.length || hours.length) anyData = true;
@@ -237,7 +237,50 @@ export async function conditions(triplets, minBase, useHourly = false) {
   saveReadings(updates, now);
   // Nothing downloaded and nothing saved to fall back on: report the error.
   if (!anyData && (daily.error || hourly?.error)) throw daily.error ?? hourly.error;
+
+  // Silent stations (no signal for hours): ask the NWS whether it's storming there, so the
+  // note can say "likely snowed in" instead of just "offline". Only silent sites are
+  // checked, so this costs nothing on a normal day.
+  await Promise.allSettled(result
+    .filter((c) => c.score.silent && !c.score.silent.sensorOnly && c.station.lat != null)
+    .map(async (c) => {
+      const storm = await stormInfo(c.station.lat, c.station.lon);
+      if (storm.alert || storm.snowNow) c.score.notes[0] = silenceNote(c.score.silent, storm, now);
+      c.storm = storm;
+    }));
+
   return result.sort((a, b) => b.score.score - a.score.score);
+}
+
+// ---- Storm check for silent stations -------------------------------------------------
+
+const WINTER_ALERT = /blizzard|winter storm|ice storm|heavy snow|lake effect snow|snow squall|winter weather/i;
+const stormCache = new Map(); // "lat,lon" -> { at, info }
+const STORM_CACHE_MS = 30 * 60 * 1000;
+
+/**
+ * { alert: 'Winter Storm Warning' | null, snowNow: boolean } for a location, from NWS active
+ * alerts and the current/next forecast period. Cached for 30 minutes.
+ */
+export async function stormInfo(lat, lon) {
+  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+  const hit = stormCache.get(key);
+  if (hit && Date.now() - hit.at < STORM_CACHE_MS) return hit.info;
+
+  const [alerts, fc] = await Promise.allSettled([
+    getJson(`${NWS}/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`),
+    forecast(lat, lon),
+  ]);
+  const events = alerts.status === 'fulfilled'
+    ? (alerts.value?.features ?? []).map((f) => f.properties?.event).filter(Boolean) : [];
+  // Most serious first: warnings before advisories.
+  const alert = events.filter((e) => WINTER_ALERT.test(e))
+    .sort((a, b) => Number(/advisory/i.test(a)) - Number(/advisory/i.test(b)))[0] ?? null;
+  const periods = fc.status === 'fulfilled' ? fc.value : [];
+  const snowNow = periods.slice(0, 2).some((p) => /snow|blizzard/i.test(p.short));
+  const info = { alert, snowNow };
+  stormCache.set(key, { at: Date.now(), info });
+  return info;
 }
 
 /** Cached conditions, only if scored with the same settings. */

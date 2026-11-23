@@ -24,10 +24,18 @@ const FRESH_WEIGHT = 0.30;
 const TEMP_WEIGHT = 0.15;
 
 /**
- * Hourly readings (including ones saved on the phone when NRCS is down) are used until a
- * newer daily reading exists, but never once they are older than this.
+ * Hourly readings (including ones saved on the phone) are used until a newer daily reading
+ * exists. In heavy snow a SNOTEL station often can't get its signal out and goes silent
+ * for hours or days. That doesn't mean the snow is gone, so the last report keeps being
+ * used (clearly marked) for up to a week rather than being thrown away.
  */
-export const HOURLY_MAX_AGE_HOURS = 48;
+export const HOURLY_MAX_AGE_HOURS = 7 * 24;
+
+/**
+ * NRCS normally posts hourly readings 1-2 hours late. A station whose last snow-depth
+ * reading is older than this is treated as silent (likely snowed in or offline).
+ */
+export const SILENT_AFTER_HOURS = 4;
 const HOUR = 3600000;
 
 export const Rating = Object.freeze({
@@ -203,16 +211,28 @@ export function currentFromHourly(hours, nowMs = Date.now(), maxAgeHours = HOURL
     const xs = withDepth.filter((h) => h.t >= t - before && h.t <= t + after).map((h) => h.depth);
     return xs.length ? median(xs) : null;
   };
+  // Baseline for "new snow": readings around the moment, or if the station was silent
+  // then (a gap in the data), its last reading in the 6 hours before.
+  const baseline = (t) => {
+    const near = depthAround(t, HOUR, HOUR);
+    if (near != null) return near;
+    const before = withDepth.filter((h) => h.t <= t && h.t >= t - 6 * HOUR);
+    return before.length ? before[before.length - 1].depth : null;
+  };
   const depth = depthAround(latestT, 2 * HOUR, 0);
   const ago = (hrs) => {
-    const d = depthAround(latestT - hrs * HOUR, HOUR, HOUR);
+    const d = baseline(latestT - hrs * HOUR);
     return d == null ? null : Math.max(0, depth - d);
   };
 
+  const sortedAll = [...hours].sort((a, b) => b.t - a.t);
   const lastOf = (key, maxAgeHrs) => {
-    const h = [...hours].sort((a, b) => b.t - a.t).find((x) => x[key] != null && latestT - x.t <= maxAgeHrs * HOUR);
+    const h = sortedAll.find((x) => x[key] != null && latestT - x.t <= maxAgeHrs * HOUR);
     return h ? h[key] : null;
   };
+  // Last time the station sent anything at all (temperature can keep coming in while
+  // heavy snowfall blocks the ultrasonic depth sensor).
+  const lastReport = sortedAll.find((x) => x.depth != null || x.tobs != null || x.swe != null);
 
   return {
     depth,
@@ -221,7 +241,45 @@ export function currentFromHourly(hours, nowMs = Date.now(), maxAgeHours = HOURL
     temp: lastOf('tobs', 3),
     swe: lastOf('swe', 12),
     asOfMs: latestT,
+    lastReportMs: lastReport ? lastReport.t : latestT,
   };
+}
+
+/**
+ * Is the station silent? Returns null when it's reporting normally, otherwise
+ * { sinceMs, hours, sensorOnly } where sensorOnly means the station is still sending
+ * other readings but its snow-depth sensor isn't.
+ */
+export function silence(cur, nowMs = Date.now()) {
+  if (!cur) return null;
+  const quietHours = (nowMs - cur.asOfMs) / HOUR;
+  if (quietHours < SILENT_AFTER_HOURS) return null;
+  return {
+    sinceMs: cur.asOfMs,
+    hours: Math.floor(quietHours),
+    sensorOnly: (nowMs - cur.lastReportMs) / HOUR < SILENT_AFTER_HOURS,
+  };
+}
+
+/** "2:00 PM" today, "Sat 2:00 PM" otherwise, in the phone's time zone. */
+export function shortTime(ms, nowMs = Date.now()) {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return localIso(d) === localIso(new Date(nowMs)) ? time : `${d.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+}
+
+/**
+ * The note for a silent station. storm (from the NWS, optional):
+ * { alert: 'Winter Storm Warning' | null, snowNow: boolean }.
+ */
+export function silenceNote(sig, storm = null, nowMs = Date.now()) {
+  const when = shortTime(sig.sinceMs, nowMs);
+  if (sig.sensorOnly) {
+    return `Snow-depth sensor silent since ${when} – heavy snowfall can block it. Depth is from its last reading`;
+  }
+  if (storm?.alert) return `No report since ${when} – ${storm.alert} here, station is likely snowed in. Expect more snow than shown`;
+  if (storm?.snowNow) return `No report since ${when} – snowing here per NWS, signal likely blocked. Expect more snow than shown`;
+  return `No report since ${when} – station may be snowed in or offline. Numbers are from its last report`;
 }
 
 /**
@@ -241,10 +299,15 @@ export function scoreHourly(hours, days, nowMs = Date.now(), minBaseIn = DEFAULT
     new72: cur.new72 ?? daily.new72In,
     temp: cur.temp ?? daily.tempF,
   };
+  const r = rate(inputs, minBaseIn);
+  // A silent station leads its notes: it matters more than anything else on the card.
+  const sig = silence(cur, nowMs);
+  if (sig) r.notes.unshift(silenceNote(sig, null, nowMs));
   return {
-    ...rate(inputs, minBaseIn), source: 'hourly',
+    ...r, source: 'hourly',
     depthIn: inputs.depth, new24In: inputs.new24, new72In: inputs.new72,
     sweIn: cur.swe ?? daily.sweIn, tempF: inputs.temp,
     asOf: localIso(new Date(cur.asOfMs)), asOfMs: cur.asOfMs,
+    silent: sig,
   };
 }
