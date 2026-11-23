@@ -20,6 +20,7 @@
              currentFromHourly, scoreHourly, stationTimeToMs, dailyReadingMs, silenceNote } from '../js/scorer.js';
     import { mergeHours } from '../js/readings.js';
     import { parseWideCsv, buildBcData, bcHours, bcDays, bcTriplet, isBcTriplet } from '../js/bc.js';
+    import { abTriplet, isAbTriplet, albertaTimeToMs, splitName, isDuplicateOrRetired, snowStations, parseTable, toHourly, buildAbData } from '../js/ab.js';
     import { ecccWarningName, ecccPeriods } from '../js/api.js';
     import { dangerLevel, inGeometry, milesToGeometry, findZone, htmlToText, usForecastFrom, caForecastFrom, shortRegionName } from '../js/avalanche.js';
 
@@ -267,6 +268,97 @@
     test('BC ids look like SNOTEL triplets and are told apart', () => {
       eq(bcTriplet('1A01P'), '1A01P:BC:ASWS'); ok(isBcTriplet('1A01P:BC:ASWS'), 'bc'); ok(!isBcTriplet('588:ID:SNTL'), 'us');
     });
+    // ---- Alberta (Alberta Rivers) ----------------------------------------------------
+    // 5-day files: rows stamped in Alberta local time, columns listed in ts_metadata.
+    const AB_NOW = Date.UTC(2026, 10, 23, 18, 0); // Nov 23 11:00 AM MST
+    const mstStamp = (ms) => new Date(ms - 7 * HOUR).toISOString().slice(0, 19).replace('T', ' ');
+    /** A 5-day file; row(minutesAgo) -> [depth cm, swe mm, temp °C] (null = no reading). */
+    const abTable = (minutes, step, row) => ({
+      ts_metadata: [
+        { ts_data_sequence: 1, parameter_name: 'PC' }, { ts_data_sequence: 2, parameter_name: 'SD' },
+        { ts_data_sequence: 3, parameter_name: 'SD-SS' }, { ts_data_sequence: 4, parameter_name: 'SW' },
+        { ts_data_sequence: 5, parameter_name: 'TA' },
+      ],
+      data: Array.from({ length: Math.floor(minutes / step) + 1 }, (_, k) => {
+        const ago = minutes - k * step;
+        const [d, w, t] = row(ago);
+        return { values: [mstStamp(AB_NOW - ago * 60000), 0, d, null, w, t] };
+      }),
+    });
+    const abSt = [{ id: '05BB803', rawName: 'Sunshine Village - EPA', lat: 51.07745, lon: -115.78159 }];
+
+    test('Alberta times are Mountain Standard Time (UTC-7) all year', () => {
+      eq(albertaTimeToMs('2026-11-23 10:30:00'), Date.UTC(2026, 10, 23, 17, 30), 'winter');
+      eq(albertaTimeToMs('2026-07-01 10:00:00'), Date.UTC(2026, 6, 1, 17, 0), 'summer too');
+    });
+    test('Alberta names: agency suffix split off; BC, SNOTEL and retired stations skipped', () => {
+      const n = splitName('Bow Summit - PC');
+      eq(n.name, 'Bow Summit'); eq(n.operator, 'Parks Canada');
+      eq(splitName("Calgary Int'l A - MSC").name, "Calgary Int'l A");
+      ok(isDuplicateOrRetired('1A01P', 'Yellowhead - BC'), 'BC'); ok(isDuplicateOrRetired('13A19S', 'Flattop Mountain - Snotel'), 'SNOTEL');
+      ok(isDuplicateOrRetired('4A03P', 'Ware Upper'), 'BC without suffix'); ok(isDuplicateOrRetired('Merchant-001', 'Banff - Merchant'), 'retired');
+      ok(!isDuplicateOrRetired('05BB803', 'Sunshine Village - EPA'), 'Alberta'); ok(!isDuplicateOrRetired('AV-012', 'Burstall Pass - FP'), 'Kananaskis');
+    });
+    test('Alberta manifest: only located snow stations that reported in the last 15 days', () => {
+      const st = (id, name, params, time, lat = '51.1') => ({ station_number: id, station_name: name, station_latitude: lat, station_longitude: '-115.8',
+        parameter_graphs: params.map((p) => ({ parname: p })), parameter_table: [{ parameter_data_status_time: time }] });
+      const list = snowStations({ envdata_stations: [
+        st('05BB803', 'Sunshine Village - EPA', ['PC', 'SD', 'SW', 'TA'], '20261123100000'),
+        st('0071', 'Steveville LITE', ['PC', 'TA'], '20261123100000'),            // no snow sensor
+        st('MSC-035', 'Prairie River Cabin - MSC', ['SD'], '20091220070000'),      // retired
+        st('4A09P', 'Pulpit Lake', ['SD', 'SW'], '20261123100000', 'null'),        // BC, no location
+      ] }, AB_NOW);
+      eq(list.map((s) => s.id).join(','), '05BB803');
+    });
+    test('Alberta 5-day file: columns found by name, 15-minute readings to one an hour', () => {
+      const raw = parseTable(abTable(120, 15, (ago) => [100 - ago / 15, 300, ago % 60 === 0 ? -10 : null]));
+      eq(raw.depth.length, 9); eq(raw.temp.length, 3, 'hourly temperature');
+      eq(raw.depth.at(-1)[0], AB_NOW); eq(raw.depth.at(-1)[1], 100);
+      const h = toHourly(raw.depth);
+      eq(h.length, 3); eq(h.at(-1)[0], AB_NOW, 'on the hour'); eq(h.at(-2)[1], 96, 'reading on the hour, not :45');
+      const late = toHourly([[AB_NOW + 30 * 60000, 7]]);
+      eq(late[0][0], AB_NOW, 'a :30 reading belongs to its own hour, never the next');
+    });
+    test('Alberta readings are converted to inches and °F, like BC', () => {
+      const { stationsFile, readingsFile } = buildAbData(abSt, new Map([['05BB803', abTable(5 * 24 * 60, 60, () => [50.8, 254, -10])]]), AB_NOW);
+      const s = stationsFile.stations[0];
+      eq(s.name, 'Sunshine Village'); eq(s.operator, 'Alberta Environment'); ok(!s.sweOnly, 'has depth');
+      const h = bcHours(readingsFile, '05BB803');
+      eq(h.length, 96); eq(h.at(-1).t, AB_NOW); eq(h.at(-1).depth, 20); eq(h.at(-1).swe, 10); eq(h.at(-1).tobs, 14);
+      const days = bcDays(readingsFile, '05BB803');
+      eq(days.at(-1).date, '2026-11-22', 'last finished day (MST)'); eq(days.length, 4, 'only days the 5-day file fully covers');
+    });
+    test('Alberta daily values build up past 5 days from the previous build', () => {
+      const previous = {
+        stations: { stations: [{ id: '05BB803', name: 'Sunshine Village', operator: 'Alberta Environment' }] },
+        readings: { stations: { '05BB803': { days: [['2026-11-10', 15, 4, 20, 25, 15], ['2026-11-18', 18, 5, 20, 25, 15], ['2026-11-01', 1, 0, 30, 35, 25]] } } },
+      };
+      const { readingsFile } = buildAbData(abSt, new Map([['05BB803', abTable(5 * 24 * 60, 60, () => [50.8, 254, -10])]]), AB_NOW, previous);
+      const dates = bcDays(readingsFile, '05BB803').map((d) => d.date);
+      eq(dates.join(','), '2026-11-10,2026-11-18,2026-11-19,2026-11-20,2026-11-21,2026-11-22', 'old days kept, >15 days dropped');
+      // A station whose file failed to download keeps its days.
+      const { stationsFile: s2, readingsFile: r2 } = buildAbData(abSt, new Map(), AB_NOW, previous);
+      eq(s2.stations.length, 1); eq(bcDays(r2, '05BB803').length, 2);
+    });
+    test('Alberta: snow water only stations and same-name stations from two agencies', () => {
+      const sts = [
+        { id: '05CA805', rawName: 'Skoki Lodge - EPA', lat: 51.5, lon: -116 },
+        { id: '05BA813', rawName: 'Bow Summit - EPA', lat: 51.7, lon: -116.5 },
+        { id: 'AV-008', rawName: 'Bow Summit - PC', lat: 51.7, lon: -116.5 },
+        { id: 'MSC-001', rawName: 'Banff - MSC', lat: 51.2, lon: -115.5 },  // temperature only: left out
+      ];
+      const t = (d, w) => abTable(24 * 60, 60, () => [d, w, -5]);
+      const { stationsFile } = buildAbData(sts, new Map([['05CA805', t(null, 200)], ['05BA813', t(80, null)], ['AV-008', t(75, null)], ['MSC-001', t(null, null)]]), AB_NOW);
+      const byId = Object.fromEntries(stationsFile.stations.map((s) => [s.id, s]));
+      ok(byId['05CA805'].sweOnly, 'Skoki snow water only');
+      eq(byId['05BA813'].name, 'Bow Summit'); eq(byId['AV-008'].name, 'Bow Summit (Parks Canada)');
+      ok(!byId['MSC-001'], 'no snow readings: left out');
+    });
+    test('Alberta ids look like SNOTEL triplets and are told apart', () => {
+      eq(abTriplet('05BB803'), '05BB803:AB:ABR'); ok(isAbTriplet('AV-012:AB:ABR'), 'ab');
+      ok(!isAbTriplet('1A01P:BC:ASWS'), 'bc'); ok(!isBcTriplet('05BB803:AB:ABR'), 'not bc');
+    });
+
     test('Environment Canada warnings are named like NWS alerts', () => {
       eq(ecccWarningName({ description: { en: 'YELLOW WARNING - SNOWFALL' } }), 'Snowfall Warning');
       eq(ecccWarningName({ description: { en: 'ORANGE WARNING - WINTER STORM' } }), 'Winter Storm Warning');

@@ -1,13 +1,13 @@
-# Publishes SnowScout to GitHub Pages, with fresh British Columbia snow data.
+# Publishes SnowScout to GitHub Pages, with fresh British Columbia and Alberta snow data.
 #
-# Runs when you upload changes, about every 30 minutes (to refresh BC readings), and
+# Runs when you upload changes, about every 30 minutes (to refresh BC and Alberta readings), and
 # when you press "Run workflow" on the Actions tab. Free for public repositories.
 #
 # One-time setup: repository Settings > Pages > Build and deployment > Source:
 # "GitHub Actions".
 #
 # Note: GitHub pauses scheduled runs in repositories with no activity for 60 days.
-# If BC data stops updating, open the Actions tab and re-enable this workflow.
+# If BC or Alberta data stops updating, open the Actions tab and re-enable this workflow.
 #
 # Build and deploy are separate jobs on purpose: when deploy-pages runs right after the
 # upload in the same job it sometimes can't find the upload yet (actions/deploy-pages#451),
@@ -43,6 +43,8 @@ jobs:
           node-version: 22
       - name: Download BC snow data
         run: node scripts/build-bc-data.mjs
+      - name: Download Alberta snow data
+        run: node scripts/build-ab-data.mjs
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

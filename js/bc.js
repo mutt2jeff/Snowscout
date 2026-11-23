@@ -87,21 +87,25 @@ const median = (xs) => {
 };
 const within = (series, from, to) => series.filter(([t]) => t > from && t <= to).map(([, v]) => v);
 
-/** Pacific Standard Time date ('YYYY-MM-DD') of an instant. */
-const pstDate = (ms) => new Date(ms + BC_TZ * HOUR).toISOString().slice(0, 10);
+/** Date ('YYYY-MM-DD') of an instant in standard time tz hours from UTC (BC: Pacific). */
+const localDate = (ms, tz) => new Date(ms + tz * HOUR).toISOString().slice(0, 10);
+
+/** The instant of midnight (standard time, tz hours from UTC) at the END of date. */
+export const endOfDayMs = (date, tz) =>
+  Date.UTC(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10) + 1) - tz * HOUR;
 
 /**
  * Daily values from hourly series, matching SNOTEL's convention: the daily value for date D
  * is the reading at midnight (PST) at the END of D. Snow depth and SWE use the median of
- * the 3 readings up to midnight (the depth sensor jitters); high/low are over the day.
- * Only finished days are produced.
+ * the readings in the 3 hours up to midnight (the depth sensor jitters); high/low are over
+ * the day. Only finished days are produced. tz: the province's standard time (BC -8, AB -7).
  */
-export function dailyFromHourly({ depth = [], swe = [], temp = [] }, nowMs, days = DAYS_PUBLISHED) {
+export function dailyFromHourly({ depth = [], swe = [], temp = [] }, nowMs, days = DAYS_PUBLISHED, tz = BC_TZ) {
   const out = [];
-  const today = pstDate(nowMs);
+  const today = localDate(nowMs, tz);
   for (let i = days; i >= 1; i--) {
     const date = addDays(today, -i);
-    const midnight = Date.UTC(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10) + 1) - BC_TZ * HOUR;
+    const midnight = endOfDayMs(date, tz);
     const near = (series) => {
       const xs = within(series, midnight - 3 * HOUR, midnight);
       return xs.length ? median(xs) : null;

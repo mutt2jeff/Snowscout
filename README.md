@@ -36,13 +36,31 @@ GitHub pauses scheduled runs if a repository has no activity for 60 days. If BC 
 To undo: set Pages back to **Deploy from a branch** (main, /root). The app keeps working
 for US sites; BC sites show "Couldn't load BC snow data".
 
+## Alberta stations
+
+Alberta's snow stations come from Alberta Rivers (rivers.alberta.ca): Alberta Environment and
+Protected Areas' mountain stations, plus Parks Canada, Kananaskis (Alberta Parks), Environment
+Canada, Alberta Agriculture and other partners' stations. The same Action
+(`scripts/build-ab-data.mjs`, using `js/ab.js`) downloads each station's 5-day file and
+publishes `data/ab-stations.json` and `data/ab-readings.json`, in the same layout as BC's.
+
+- Every station with a snow-depth or snow-water sensor that reported in the last 15 days is
+  offered once it has actually sent a snow reading. Stations that only send temperature right
+  now (many town and farm stations early in the season) appear on their own once they report snow.
+- Alberta keeps only 5 days, so each run carries forward the daily values the previous run
+  published: the 15-day history builds up over the first two weeks.
+- Alberta Rivers stamps its readings in Mountain Standard Time (UTC-7) all year.
+- Alberta also lists nearby BC and SNOTEL stations; those are left out (SnowScout has them already).
+- The data is provisional (not yet reviewed), which station pages say.
+
 ## Differences from the Android app
 
 - No background fresh-snow alerts (a web page can't check while it's closed). Open it to check.
 - Avalanche forecasts on each site's page (Settings → Show avalanche forecasts). Web only
   for now. US: avalanche.org's zone map, then that zone's full forecast; a site up to 10 mi
-  outside a zone is shown that zone, marked as nearby. BC: Avalanche Canada's point forecast.
-  The sled score never includes avalanche danger.
+  outside a zone is shown that zone, marked as nearby. BC and Alberta: Avalanche Canada's point
+  forecast (including Parks Canada and Kananaskis). The sled score never includes avalanche danger.
+- Alberta stations: web only for now.
 - Everything else matches: same sled score (`js/scorer.js` is a line-for-line port of
   `SnowScorer.kt`, with the same tests), map picker, site details, NWS forecast, settings.
 
@@ -64,9 +82,10 @@ powershell -ExecutionPolicy Bypass -File serve.ps1
 
 Then open http://localhost:8765 in a browser. Scoring tests: http://localhost:8765/tests/
 
-To try BC stations locally, start it with `-Dev` and open
-http://localhost:8765/tests/build-bc.html once: it builds `data/bc-*.json` from BC's live
-files (what the Action does online). Delete the `data` folder afterwards; it isn't uploaded.
+To try BC and Alberta stations locally, start it with `-Dev` and open
+http://localhost:8765/tests/build-bc.html and http://localhost:8765/tests/build-ab.html
+once: they build `data/bc-*.json` and `data/ab-*.json` from the provinces' live files (what
+the Action does online). Delete the `data` folder afterwards; it isn't uploaded.
 
 ## Files
 
@@ -74,9 +93,10 @@ files (what the Action does online). Delete the `data` folder afterwards; it isn
 index.html              page shell, iPhone home-screen settings
 css/app.css             styles (light and dark mode)
 js/app.js               screens: dashboard, site picker (map + list), detail, settings
-js/api.js               NRCS / NWS / BC / Environment Canada data, station cache
+js/api.js               NRCS / NWS / BC / Alberta / Environment Canada data, station cache
 js/bc.js                BC snow station files: building (Action) and reading (app)
-js/avalanche.js         avalanche forecasts (avalanche.org for the US, Avalanche Canada for BC)
+js/ab.js                Alberta snow station files: building (Action)
+js/avalanche.js         avalanche forecasts (avalanche.org for the US, Avalanche Canada for BC and Alberta)
 js/readings.js          readings saved on the phone for server outages
 js/scorer.js            sled score (keep in step with SnowScorer.kt)
 js/store.js             saved sites and settings (browser storage)
@@ -86,8 +106,10 @@ icons/                  app icons
 vendor/leaflet/         Leaflet 1.9.4 map library (BSD-2-Clause)
 tests/index.html        scorer tests (open in a browser)
 tests/build-bc.html     builds the BC files locally (serve.ps1 -Dev only)
+tests/build-ab.html     builds the Alberta files locally (serve.ps1 -Dev only)
 scripts/build-bc-data.mjs   run by the GitHub Action to build data/bc-*.json
+scripts/build-ab-data.mjs   run by the GitHub Action to build data/ab-*.json
 package.json            tells Node the js files are modules (for the Action)
-.github/workflows/publish.yml   the GitHub Action: publish the site + refresh BC data
+.github/workflows/publish.yml   the GitHub Action: publish the site + refresh BC and Alberta data
 serve.ps1               local test server (not needed online)
 ```

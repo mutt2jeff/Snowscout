@@ -3,8 +3,9 @@
 # then open http://localhost:8765 . Press Ctrl+C to stop.
 # (Only for testing on this computer. Testers use the hosted copy.)
 #
-# -Dev also lets tests/build-bc.html build the BC snow files locally (what the GitHub
-# Action does online): it can fetch BC's four source files and save data/bc-*.json.
+# -Dev also lets tests/build-bc.html and tests/build-ab.html build the BC and Alberta snow
+# files locally (what the GitHub Action does online): it can fetch the provinces' source
+# files and save data/bc-*.json and data/ab-*.json.
 
 param([int]$Port = 8765, [switch]$Dev)
 $root = $PSScriptRoot
@@ -41,8 +42,18 @@ try {
         $res.ContentLength64 = $bytes.Length
         $res.OutputStream.Write($bytes, 0, $bytes.Length)
       } catch { $res.StatusCode = 502 }
-    } elseif ($Dev -and $ctx.Request.HttpMethod -eq 'PUT' -and $path -match '^data/bc-(stations|readings)\.json$') {
-      # Dev only: save a built BC file.
+    } elseif ($Dev -and ($path -eq '_ab/manifest' -or $path -match '^_ab/table/([A-Za-z0-9-]{1,20})$')) {
+      # Dev only: fetch Alberta Rivers' station manifest or one station's 5-day file.
+      $url = if ($path -eq '_ab/manifest') { 'https://rivers.alberta.ca/EnvironmentalDataService/ReadManifest' }
+        else { "https://rivers.alberta.ca/apps/Basins/data/figures/river/abrivers/envdata/envdata_$($Matches[1])_table.json" }
+      try {
+        $bytes = (Invoke-WebRequest $url -UseBasicParsing -TimeoutSec 90).RawContentStream.ToArray()
+        $res.ContentType = 'application/json; charset=utf-8'
+        $res.ContentLength64 = $bytes.Length
+        $res.OutputStream.Write($bytes, 0, $bytes.Length)
+      } catch { $res.StatusCode = 502 }
+    } elseif ($Dev -and $ctx.Request.HttpMethod -eq 'PUT' -and $path -match '^data/(bc|ab)-(stations|readings)\.json$') {
+      # Dev only: save a built BC or Alberta file.
       New-Item -ItemType Directory -Force (Join-Path $root 'data') | Out-Null
       $ms = New-Object IO.MemoryStream
       $ctx.Request.InputStream.CopyTo($ms)

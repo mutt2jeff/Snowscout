@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Build Alberta data (local)</title>
+  <style>body { font: 15px/1.5 system-ui, sans-serif; margin: 24px; } .fail { color: #B3261E; } .pass { color: #1B5E20; }</style>
+</head>
+<body>
+  <h1>Build Alberta data locally</h1>
+  <p>For testing on this PC only (run <code>serve.ps1 -Dev</code>). Online, the GitHub Action builds these
+     files with <code>scripts/build-ab-data.mjs</code> using the same code. Run it again later to see daily
+     values carried forward from the previous build.</p>
+  <div id="out">Working…</div>
+  <script type="module">
+    import { buildAbData, snowStations } from '../js/ab.js';
+    const out = document.getElementById('out');
+    try {
+      const get = async (p) => { const r = await fetch(`../_ab/${p}`); if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.json(); };
+      const prevGet = (f) => fetch(`../data/${f}`, { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null), () => null);
+      const now = Date.now();
+      const [manifest, prevStations, prevReadings] = await Promise.all([get('manifest'), prevGet('ab-stations.json'), prevGet('ab-readings.json')]);
+      const stations = snowStations(manifest, now);
+      const tables = new Map();
+      let failed = 0;
+      const queue = [...stations];
+      await Promise.all([0, 1, 2, 3].map(async () => {
+        while (queue.length) {
+          const s = queue.shift();
+          try { tables.set(s.id, await get(`table/${s.id}`)); } catch { failed++; }
+          out.textContent = `Downloading… ${tables.size + failed} of ${stations.length}`;
+        }
+      }));
+      const previous = prevStations && prevReadings ? { stations: prevStations, readings: prevReadings } : null;
+      const { stationsFile, readingsFile } = buildAbData(stations, tables, now, previous);
+      const put = async (name, obj) => {
+        const body = JSON.stringify(obj);
+        const r = await fetch(`../data/${name}`, { method: 'PUT', body });
+        if (!r.ok) throw new Error(`save ${name}: ${r.status}`);
+        return body.length;
+      };
+      const sSize = await put('ab-stations.json', stationsFile);
+      const rSize = await put('ab-readings.json', readingsFile);
+      window.abBuild = {
+        candidates: stations.length, downloaded: tables.size, failed,
+        stations: stationsFile.stations.length,
+        sweOnly: stationsFile.stations.filter((s) => s.sweOnly).length,
+        latest: new Date(readingsFile.latestReadingMs).toISOString(),
+        carriedForward: !!previous,
+        stationsKB: Math.round(sSize / 1024), readingsKB: Math.round(rSize / 1024),
+      };
+      out.className = 'pass';
+      out.textContent = `Built: ${JSON.stringify(window.abBuild)}`;
+    } catch (e) {
+      out.className = 'fail';
+      out.textContent = `Failed: ${e.message}`;
+      window.abBuild = { error: e.message };
+    }
+  </script>
+</body>
+</html>

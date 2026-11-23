@@ -44,8 +44,8 @@ const fmtShort = (iso) => isoToDate(iso).toLocaleDateString('en-US', { month: 's
 function readingTime(s, c = {}) {
   if (s.source === 'hourly' && s.asOfMs) {
     const when = shortTime(s.asOfMs);
-    // Our BC data feed is behind: that's not the station's fault.
-    if (s.feedStale) return `Last update ${when} · BC data delayed`;
+    // Our BC or Alberta data feed is behind: that's not the station's fault.
+    if (s.feedStale) return `Last update ${when} · ${s.feedStale} data delayed`;
     // Silent station (snowed in / no signal): say so plainly, it's not current.
     if (s.silent) return s.silent.sensorOnly ? `Depth sensor silent since ${when}` : `Last report ${when} · no signal`;
     return `As of ${when}${c.hourlyFromSave ? ' (saved)' : ''}`;
@@ -85,7 +85,7 @@ function countView(path, title) {
 }
 
 function countStation(st) {
-  const network = api.isCanadian(st) ? 'BC snow station' : 'SNOTEL';
+  const network = api.isAlberta(st) ? 'Alberta snow station' : api.isCanadian(st) ? 'BC snow station' : 'SNOTEL';
   countView(`/station/${st.state}/${st.name}`, `${st.name}, ${st.state} (${network} ${st.id})`);
 }
 
@@ -147,7 +147,7 @@ function renderDashboard() {
         <div class="empty">
           ${icon('snow', 72)}
           <h2>Where's the best snow?</h2>
-          <p>Pick the SNOTEL or BC snow stations near the areas you ride. SnowScout pulls their latest snow depth,
+          <p>Pick the SNOTEL, BC or Alberta snow stations near the areas you ride. SnowScout pulls their latest snow depth,
              new snow, and temperature and ranks them for sledding.</p>
           <a class="btn" href="#/sites">${icon('add')}Choose sites</a>
         </div>`;
@@ -617,7 +617,9 @@ function renderDetail(triplet) {
         </table>
       </section>
 
-      <p class="footnote">${api.isCanadian(c.station)
+      <p class="footnote">${api.isAlberta(c.station)
+        ? `Snow data: ${esc(c.station.operator ?? 'Alberta Environment and Protected Areas')}, through Alberta Rivers (provisional data: not yet reviewed, and may change). Forecast: Environment and Climate Change Canada.`
+        : api.isCanadian(c.station)
         ? 'Snow data: BC Ministry of Environment, Automated Snow Weather Stations (raw readings, not quality-checked), under the Open Government Licence – British Columbia. Forecast: Environment and Climate Change Canada.'
         : 'Snow data: USDA NRCS SNOTEL (provisional, subject to revision). Forecast: National Weather Service.'}
         ${avy?.data ? `Avalanche forecast: ${esc(avy.data.center)}.` : ''}
@@ -819,7 +821,7 @@ function renderSettings() {
             <span>
               <b class="switch-title">Show avalanche forecasts</b>
               <span class="small muted">Each site's page shows today's and tomorrow's avalanche danger from the
-                forecast center that covers it (US centers through avalanche.org, Avalanche Canada in BC). It doesn't
+                forecast center that covers it (US centers through avalanche.org, Avalanche Canada in BC and Alberta). It doesn't
                 change the sled score. Always read the full forecast before riding avalanche terrain.</span>
             </span>
             <input type="checkbox" id="avalanche" role="switch" ${s.showAvalanche ? 'checked' : ''}>
@@ -844,10 +846,12 @@ function renderSettings() {
         <h2 class="section-title">Data sources</h2>
         <p class="small muted">Snow and temperature: USDA NRCS SNOTEL network (US) and the BC Ministry of
           Environment's Automated Snow Weather Stations (British Columbia, Open Government Licence – British
-          Columbia; refreshed about every 30 minutes). Values are provisional and stations occasionally report bad
-          readings. Forecasts: National Weather Service (US), Environment and Climate Change Canada (BC).
+          Columbia), and Alberta Rivers (Alberta Environment and Protected Areas, with Parks Canada, Alberta Parks,
+          Environment Canada, Alberta Agriculture and other partners' stations). Canadian data refreshes about every
+          30 minutes. Values are provisional and stations occasionally report bad
+          readings. Forecasts: National Weather Service (US), Environment and Climate Change Canada (Canada).
           Avalanche forecasts: the US forecast centers through avalanche.org (National Avalanche Center), and
-          Avalanche Canada (BC). Map: USGS The National Map.
+          Avalanche Canada (BC and Alberta). Map: USGS The National Map.
           The web version can't send fresh-snow alerts; open it to check conditions. SnowScout shows the avalanche
           centers' forecasts as published and makes no avalanche assessment of its own.</p>
 
