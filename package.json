@@ -1,0 +1,6 @@
+{
+  "name": "snowscout-web",
+  "private": true,
+  "type": "module",
+  "description": "SnowScout web app. No build step or dependencies: this file only tells Node that js/*.js are ES modules, for scripts/build-bc-data.mjs."
+}

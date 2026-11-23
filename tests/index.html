@@ -19,6 +19,8 @@
     import { score, fullDepthFor, addDays, Rating, RIDEABLE_FLOOR, DEFAULT_MIN_BASE_IN,
              currentFromHourly, scoreHourly, stationTimeToMs, dailyReadingMs, silenceNote } from '../js/scorer.js';
     import { mergeHours } from '../js/readings.js';
+    import { parseWideCsv, buildBcData, bcHours, bcDays, bcTriplet, isBcTriplet } from '../js/bc.js';
+    import { ecccWarningName, ecccPeriods } from '../js/api.js';
 
     const today = '2026-01-10';
     const series = (depths, temp = 20) =>
@@ -197,6 +199,87 @@
       const days = [dayRow('2026-11-21', 20, 15)];
       const s = scoreHourly(hourly(flat(10, 20)).map((h) => ({ ...h, tobs: null })), days, NOW, 18);
       eq(s.source, 'hourly'); eq(s.tempF, 15);
+    });
+
+    // ---- British Columbia (ASWS) ----------------------------------------------------
+    // BC's CSVs: UTC times, one column per station, empty cell = no reading that hour.
+    const BC_NOW = Date.UTC(2026, 10, 22, 20, 0); // Nov 22 12:00 PM PST
+    const utcStamp = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+    /** Wide CSV with hourly rows back `hours` hours from BC_NOW; cell(i, hoursAgo) -> value or ''. */
+    const wideCsv = (labels, hours, cell) => [
+      `DATE(UTC),${labels.join(',')}`,
+      ...Array.from({ length: hours + 1 }, (_, k) => {
+        const ago = hours - k;
+        return [utcStamp(BC_NOW - ago * HOUR), ...labels.map((_, i) => cell(i, ago))].join(',');
+      }),
+    ].join('\n');
+    const geo = { features: [{ properties: { LOCATION_ID: '1A01P', LOCATION_NAME: 'Yellowhead Lake', ELEVATION: 1860, STATUS: 'Active' },
+      geometry: { type: 'Point', coordinates: [-118.5475, 52.90622] } }] };
+
+    test('BC CSV: station ids (5 or 6 characters) and names are read, empty cells skipped', () => {
+      const m = parseWideCsv('DATE(UTC),1A01P Yellowhead Lake,1E03AP Trophy Mountain\n2026-11-22 00:00,25.0,\n2026-11-22 01:00,,30.5\n');
+      eq([...m.keys()].join(','), '1A01P,1E03AP');
+      eq(m.get('1E03AP').name, 'Trophy Mountain');
+      eq(m.get('1A01P').series.length, 1, '1A01P'); eq(m.get('1E03AP').series[0][1], 30.5);
+      eq(m.get('1A01P').series[0][0], Date.UTC(2026, 10, 22, 0, 0), 'UTC time');
+    });
+    test('BC readings are converted to inches and °F; elevation to feet', () => {
+      const { stationsFile, readingsFile } = buildBcData({
+        depth: wideCsv(['1A01P Yellowhead Lake'], 100, () => '50.8'),   // cm
+        swe: wideCsv(['1A01P Yellowhead Lake'], 100, () => '254'),      // mm
+        temp: wideCsv(['1A01P Yellowhead Lake'], 100, () => '-10'),     // °C
+      }, geo, BC_NOW);
+      const st = stationsFile.stations[0];
+      eq(st.name, 'Yellowhead Lake'); eq(st.elevFt, 6102); near(st.lat, 52.906, 0.001);
+      const h = bcHours(readingsFile, '1A01P');
+      eq(h.length, 96, 'last 4 days published'); eq(h.at(-1).t, BC_NOW);
+      eq(h.at(-1).depth, 20); eq(h.at(-1).swe, 10); eq(h.at(-1).tobs, 14);
+    });
+    test('BC daily value = midnight Pacific reading at the end of the day, high/low over the day', () => {
+      // Depth grows 1 cm an hour; temperature is warmest 6 hours before midnight.
+      const depthCsv = wideCsv(['1A01P X'], 400, (i, ago) => String(1000 - ago));
+      const tempCsv = wideCsv(['1A01P X'], 400, (i, ago) => String(-5 - Math.abs(((ago - 14) % 24 + 24) % 24 - 6)));
+      const { readingsFile } = buildBcData({ depth: depthCsv, temp: tempCsv }, geo, BC_NOW);
+      const days = bcDays(readingsFile, '1A01P');
+      eq(days.length, 15); eq(days.at(-1).date, '2026-11-21', 'last finished day (PST)');
+      // Nov 21 midnight PST = Nov 22 08:00 UTC = 12 hours before BC_NOW: the 3 readings up to
+      // then are 986, 987, 988 cm -> median 987.
+      near(days.at(-1).depth, 987 / 2.54, 0.06);
+      near(days.at(-1).tmax, 23, 0.01, 'high -5°C'); near(days.at(-1).tmin, -7.6, 0.01, 'low -22°C');
+    });
+    test('BC station snowed in: empty hours at the end, last real report used and flagged', () => {
+      const { readingsFile } = buildBcData({
+        depth: wideCsv(['1A01P X'], 100, (i, ago) => (ago < 8 ? '' : '100')),
+      }, geo, BC_NOW);
+      const hrs = bcHours(readingsFile, '1A01P');
+      eq(hrs.at(-1).t, BC_NOW - 8 * HOUR, 'empty hours dropped');
+      const s = scoreHourly(hrs, bcDays(readingsFile, '1A01P'), BC_NOW, 18, -8);
+      eq(s.source, 'hourly'); near(s.depthIn, 39.4, 0.05); ok(s.silent && !s.silent.sensorOnly, 'silent');
+      ok(/No report since/.test(s.notes[0]), s.notes[0]);
+    });
+    test('BC stations with no readings this season are left out', () => {
+      const old = utcStamp(BC_NOW - 40 * 24 * HOUR);
+      const { stationsFile } = buildBcData({ depth: `DATE(UTC),1A01P A,2B02P B\n${old},10,10\n${utcStamp(BC_NOW)},12,\n` }, null, BC_NOW);
+      eq(stationsFile.stations.map((s) => s.id).join(','), '1A01P');
+      eq(stationsFile.stations[0].lat, null, 'no location without the station list');
+    });
+    test('BC ids look like SNOTEL triplets and are told apart', () => {
+      eq(bcTriplet('1A01P'), '1A01P:BC:ASWS'); ok(isBcTriplet('1A01P:BC:ASWS'), 'bc'); ok(!isBcTriplet('588:ID:SNTL'), 'us');
+    });
+    test('Environment Canada warnings are named like NWS alerts', () => {
+      eq(ecccWarningName({ description: { en: 'YELLOW WARNING - SNOWFALL' } }), 'Snowfall Warning');
+      eq(ecccWarningName({ description: { en: 'ORANGE WARNING - WINTER STORM' } }), 'Winter Storm Warning');
+      eq(ecccWarningName({ description: { en: 'SPECIAL WEATHER STATEMENT' } }), 'Special Weather Statement');
+    });
+    test('Environment Canada forecasts are converted to °F and mph', () => {
+      const p = ecccPeriods({ forecastGroup: { forecasts: [{
+        period: { textForecastName: { en: 'Tonight' } },
+        temperatures: { temperature: [{ class: { en: 'low' }, value: { en: -13 } }] },
+        winds: { periods: [{ speed: { value: { en: 20 } }, direction: { en: 'NW' } }] },
+        abbreviatedForecast: { textSummary: { en: 'Periods of snow' }, pop: { value: { en: 70 } } },
+      }] } })[0];
+      eq(p.name, 'Tonight'); eq(p.isDaytime, false); eq(p.temperature, 9); eq(p.wind, 'NW 12 mph');
+      eq(p.short, 'Periods of snow'); eq(p.precip, 70);
     });
 
     let passed = 0;

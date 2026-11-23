@@ -2,9 +2,18 @@
 #   powershell -ExecutionPolicy Bypass -File serve.ps1
 # then open http://localhost:8765 . Press Ctrl+C to stop.
 # (Only for testing on this computer. Testers use the hosted copy.)
+#
+# -Dev also lets tests/build-bc.html build the BC snow files locally (what the GitHub
+# Action does online): it can fetch BC's four source files and save data/bc-*.json.
 
-param([int]$Port = 8765)
+param([int]$Port = 8765, [switch]$Dev)
 $root = $PSScriptRoot
+$bcSources = @{
+  'stations' = 'https://openmaps.gov.bc.ca/geo/pub/wfs?service=WFS&version=2.0.0&request=GetFeature&typeName=WHSE_WATER_MANAGEMENT.SSL_SNOW_ASWS_STNS_SP&outputFormat=application/json&srsName=EPSG:4326'
+  'depth' = 'https://www.env.gov.bc.ca/wsd/data_searches/snow/asws/data/SD.csv'
+  'swe' = 'https://www.env.gov.bc.ca/wsd/data_searches/snow/asws/data/SW.csv'
+  'temp' = 'https://www.env.gov.bc.ca/wsd/data_searches/snow/asws/data/TA.csv'
+}
 $types = @{
   '.html' = 'text/html; charset=utf-8'; '.js' = 'text/javascript; charset=utf-8'
   '.css' = 'text/css; charset=utf-8'; '.json' = 'application/json'; '.webmanifest' = 'application/manifest+json'
@@ -24,7 +33,22 @@ try {
     if ($env:SNOWSCOUT_SERVE_LOG) {
       Add-Content $env:SNOWSCOUT_SERVE_LOG "$(Get-Date -Format o) $($ctx.Request.HttpMethod) /$path sw=$($ctx.Request.Headers['Service-Worker'])"
     }
-    if ($file.StartsWith($root) -and (Test-Path $file -PathType Leaf)) {
+    if ($Dev -and $path -match '^_bc/(stations|depth|swe|temp)$') {
+      # Dev only: fetch one of BC's source files (fixed list, nothing else).
+      try {
+        $bytes = (Invoke-WebRequest $bcSources[$Matches[1]] -UseBasicParsing -TimeoutSec 90).RawContentStream.ToArray()
+        $res.ContentType = 'text/plain; charset=utf-8'
+        $res.ContentLength64 = $bytes.Length
+        $res.OutputStream.Write($bytes, 0, $bytes.Length)
+      } catch { $res.StatusCode = 502 }
+    } elseif ($Dev -and $ctx.Request.HttpMethod -eq 'PUT' -and $path -match '^data/bc-(stations|readings)\.json$') {
+      # Dev only: save a built BC file.
+      New-Item -ItemType Directory -Force (Join-Path $root 'data') | Out-Null
+      $ms = New-Object IO.MemoryStream
+      $ctx.Request.InputStream.CopyTo($ms)
+      [IO.File]::WriteAllBytes((Join-Path $root $path), $ms.ToArray())
+      $res.StatusCode = 204
+    } elseif ($file.StartsWith($root) -and (Test-Path $file -PathType Leaf)) {
       $ext = [IO.Path]::GetExtension($file).ToLower()
       $res.ContentType = if ($types[$ext]) { $types[$ext] } else { 'application/octet-stream' }
       $res.Headers.Add('Cache-Control', 'no-cache')

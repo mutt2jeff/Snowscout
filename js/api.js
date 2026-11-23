@@ -1,15 +1,26 @@
-// Data access: NRCS SNOTEL (AWDB), NWS forecasts. All three government services send
-// "Access-Control-Allow-Origin: *", so the browser calls them directly: no server needed.
+// Data access.
+//  US: NRCS SNOTEL (AWDB) snow data, National Weather Service forecasts. Both send
+//      "Access-Control-Allow-Origin: *", so the browser calls them directly.
+//  BC: the province's ASWS snow stations, from files our GitHub Action publishes next to the
+//      app (data/bc-*.json, see js/bc.js), and Environment Canada forecasts (CORS-enabled).
 
-import { addDays, score, scoreHourly, silenceNote, stationTimeToMs, todayIso } from './scorer.js';
+import { addDays, score, scoreHourly, shortTime, silenceNote, stationTimeToMs, todayIso } from './scorer.js';
 import { load, save } from './store.js';
 import { mergeHours, saveReadings, savedReadings } from './readings.js';
+import { BC_STATE, BC_TZ, bcDays, bcHours, bcTriplet, isBcTriplet } from './bc.js';
 
 const AWDB = 'https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1';
 const NWS = 'https://api.weather.gov';
+const ECCC = 'https://api.weather.gc.ca/collections/citypageweather-realtime/items';
+const BC_STATIONS_URL = 'data/bc-stations.json';
+const BC_READINGS_URL = 'data/bc-readings.json';
 const STATION_CACHE_KEY = 'ss.stations.v2'; // v2: adds each station's time zone
+const BC_STATION_CACHE_KEY = 'ss.bcstations.v1';
 const HOUR = 3600000;
 const STATION_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
+const BC_STATION_CACHE_MS = 24 * HOUR;
+/** The BC files normally refresh every ~30 min. Older than this, the feed itself is behind. */
+const BC_FEED_STALE_MS = 3 * HOUR;
 const HISTORY_DAYS = 14;
 const BATCH = 40;
 
@@ -19,13 +30,13 @@ const BATCH = 40;
 const RETRY_DELAYS_MS = [700, 1800];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function getJson(url) {
+async function getJson(url, init = {}) {
   let lastError;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     if (attempt) await sleep(RETRY_DELAYS_MS[attempt - 1]);
     let res;
     try {
-      res = await fetch(url, { headers: { Accept: 'application/json' } });
+      res = await fetch(url, { headers: { Accept: 'application/json' }, ...init });
     } catch {
       // Includes a 503 the browser couldn't read. Offline: no point retrying.
       lastError = new Error(navigator.onLine === false ? 'No internet connection' : 'Could not reach the server');
@@ -61,24 +72,49 @@ function toStation(s) {
 
 const defaultTz = (state) => (state === 'AK' ? -9 : -8);
 
-/** All active SNOTEL stations (~900). Cached on the phone for a week. */
+function toBcStation(s) {
+  return {
+    triplet: bcTriplet(s.id), id: s.id, name: s.name || `Station ${s.id}`, state: BC_STATE, county: null,
+    elev: s.elevFt ?? null, lat: s.lat ?? null, lon: s.lon ?? null, tz: BC_TZ, country: 'CA',
+    sweOnly: !!s.sweOnly,
+  };
+}
+
+/** A station list cached on the phone: fresh copy if old, saved copy if offline. */
+async function cachedList(key, maxAgeMs, fetchList) {
+  const cached = load(key, null);
+  if (cached && Date.now() - cached.savedAt < maxAgeMs && cached.list?.length) return cached.list;
+  try {
+    const list = await fetchList();
+    save(key, { savedAt: Date.now(), list });
+    return list;
+  } catch (e) {
+    if (cached?.list?.length) return cached.list; // offline: use the stale copy
+    throw e;
+  }
+}
+
+const snotelStations = () => cachedList(STATION_CACHE_KEY, STATION_CACHE_MS, async () => {
+  const raw = await getJson(`${AWDB}/stations?stationTriplets=*:*:SNTL&returnStationElements=false&activeOnly=true`);
+  return raw.filter((s) => !s.networkCode || s.networkCode === 'SNTL').map(toStation);
+});
+
+const bcStations = () => cachedList(BC_STATION_CACHE_KEY, BC_STATION_CACHE_MS, async () => {
+  const file = await getJson(BC_STATIONS_URL, { cache: 'no-cache' });
+  return (file?.stations ?? []).map(toBcStation);
+});
+
+/**
+ * All active SNOTEL stations (~900, cached a week) plus BC's snow stations (~150, cached a
+ * day). If one network can't be loaded the other still shows.
+ */
 export function allStations() {
   if (!stationsPromise) {
     stationsPromise = (async () => {
-      const cached = load(STATION_CACHE_KEY, null);
-      if (cached && Date.now() - cached.savedAt < STATION_CACHE_MS && cached.list?.length) return cached.list;
-      try {
-        const raw = await getJson(`${AWDB}/stations?stationTriplets=*:*:SNTL&returnStationElements=false&activeOnly=true`);
-        const list = raw
-          .filter((s) => !s.networkCode || s.networkCode === 'SNTL')
-          .map(toStation)
-          .sort((a, b) => a.state.localeCompare(b.state) || a.name.localeCompare(b.name));
-        save(STATION_CACHE_KEY, { savedAt: Date.now(), list });
-        return list;
-      } catch (e) {
-        if (cached?.list?.length) return cached.list; // offline: use the stale copy
-        throw e;
-      }
+      const [us, bc] = await Promise.allSettled([snotelStations(), bcStations()]);
+      if (us.status === 'rejected' && bc.status === 'rejected') throw us.reason;
+      return [...(us.value ?? []), ...(bc.value ?? [])]
+        .sort((a, b) => a.state.localeCompare(b.state) || a.name.localeCompare(b.name));
     })();
     stationsPromise.catch(() => { stationsPromise = null; }); // allow retry after a failure
   }
@@ -87,17 +123,30 @@ export function allStations() {
 
 export function stationFromTriplet(triplet) {
   const [id, state] = triplet.split(':');
+  if (isBcTriplet(triplet)) return toBcStation({ id });
   return { triplet, id, name: `Site ${id}`, state: state || '', county: null, elev: null, lat: null, lon: null, tz: defaultTz(state) };
 }
+
+export const isCanadian = (st) => st?.country === 'CA' || isBcTriplet(st?.triplet ?? '');
 
 export function stationSubtitle(st) {
   const parts = [st.state];
   if (st.county) parts.push(`${st.county} Co.`);
   if (st.elev != null) parts.push(`${st.elev.toLocaleString('en-US')} ft`);
+  if (st.sweOnly) parts.push('snow water only');
   return parts.join(' · ');
 }
 
-export const nrcsUrl = (st) => `https://wcc.sc.egov.usda.gov/nwcc/site?sitenum=${encodeURIComponent(st.id)}`;
+/** The agency's own page for a station: NRCS for SNOTEL, the BC snow station page for BC. */
+export function sourceLink(st) {
+  if (isCanadian(st)) {
+    return {
+      url: 'https://www2.gov.bc.ca/gov/content/environment/air-land-water/water/water-science-data/water-data-tools/snow-survey-data/automated-snow-weather-stations',
+      label: 'Open BC snow station info',
+    };
+  }
+  return { url: `https://wcc.sc.egov.usda.gov/nwcc/site?sitenum=${encodeURIComponent(st.id)}`, label: 'Open NRCS site page' };
+}
 
 // ---- Conditions ---------------------------------------------------------------------
 
@@ -186,6 +235,9 @@ export async function conditions(triplets, minBase, useHourly = false) {
   const today = todayIso();
   const now = Date.now();
   const saved = new Map(triplets.map((t) => [t, savedReadings(t)]));
+  const us = triplets.filter((t) => !isBcTriplet(t));
+  const bc = triplets.filter(isBcTriplet);
+  const NONE = { data: new Map(), failed: new Set(), error: null };
 
   // Do we already have the older hours (back past 72h) and something from the last day?
   const hasRecentHours = (t) => {
@@ -193,15 +245,22 @@ export async function conditions(triplets, minBase, useHourly = false) {
     return !!h?.length && h[0].t <= now - 70 * HOUR && h[h.length - 1].t >= now - 20 * HOUR;
   };
 
-  const [daily, hourly] = await Promise.all([
-    fetchGroups(triplets, (g) => dataUrl(g, 'SNWD,WTEQ,TOBS,TMAX,TMIN,PREC', 'DAILY', addDays(today, -HISTORY_DAYS), today)),
-    useHourly
+  const [daily, hourly, bcFile] = await Promise.all([
+    us.length
+      ? fetchGroups(us, (g) => dataUrl(g, 'SNWD,WTEQ,TOBS,TMAX,TMIN,PREC', 'DAILY', addDays(today, -HISTORY_DAYS), today))
+      : NONE,
+    useHourly && us.length
       // 3 days back covers the 72h baseline (1 day if saved hours cover the rest);
       // "tomorrow" covers phones in time zones ahead of the stations' Pacific Standard Time.
-      ? fetchGroups(triplets, (g) => dataUrl(g, 'SNWD,TOBS,WTEQ', 'HOURLY',
+      ? fetchGroups(us, (g) => dataUrl(g, 'SNWD,TOBS,WTEQ', 'HOURLY',
         addDays(today, g.every(hasRecentHours) ? -1 : -3), addDays(today, 1)))
-      : Promise.resolve(null),
+      : null,
+    // BC: one small file with every station's latest readings.
+    bc.length
+      ? getJson(BC_READINGS_URL, { cache: 'no-cache' }).then((file) => ({ file }), (error) => ({ error }))
+      : null,
   ]);
+  const bcFeedStale = !!bcFile?.file && now - bcFile.file.generatedMs > BC_FEED_STALE_MS;
 
   const updates = {};
   let anyData = false;
@@ -209,20 +268,40 @@ export async function conditions(triplets, minBase, useHourly = false) {
     const station = byTriplet.get(t) ?? stationFromTriplet(t);
     const tz = station.tz ?? defaultTz(station.state);
     const prev = saved.get(t);
+    const isBc = isBcTriplet(t);
 
-    const dailyFailed = daily.failed.has(t);
-    const days = dailyFailed ? (prev?.days ?? []) : toDays(daily.data.get(t));
+    // Fresh readings, or null where the download failed (then the saved ones are used).
+    let freshDays, freshHours;
+    if (isBc) {
+      freshDays = bcFile.file ? bcDays(bcFile.file, station.id) : null;
+      freshHours = bcFile.file ? bcHours(bcFile.file, station.id) : null;
+    } else {
+      freshDays = daily.failed.has(t) ? null : toDays(daily.data.get(t));
+      freshHours = hourly && !hourly.failed.has(t) ? toHours(hourly.data.get(t), tz) : null;
+    }
+
+    const dailyFailed = freshDays == null;
+    const days = freshDays ?? prev?.days ?? [];
 
     let hours = prev?.hours ?? [];
-    const hourlyFailed = !!hourly && hourly.failed.has(t);
-    if (hourly && !hourlyFailed) hours = mergeHours(hours, toHours(hourly.data.get(t), tz));
+    const hourlyFailed = useHourly && freshHours == null;
+    if (useHourly && freshHours) hours = mergeHours(hours, freshHours);
 
     updates[t] = { days, hours };
     if (days.length || hours.length) anyData = true;
 
     let s = useHourly ? scoreHourly(hours, days, now, minBase, tz) : score(days, today, minBase);
     const couldntLoad = (dailyFailed || hourlyFailed) && !days.length && !hours.length;
-    if (couldntLoad) s = { ...s, notes: ["Couldn't reach NRCS – try refreshing"] };
+    if (couldntLoad) s = { ...s, notes: [isBc ? "Couldn't load BC snow data – try refreshing" : "Couldn't reach NRCS – try refreshing"] };
+
+    if (station.sweOnly && s.depthIn == null) {
+      s = { ...s, notes: ['No snow-depth sensor here – this station only measures snow water (SWE), so it has no sled score'] };
+    }
+    // The BC feed itself is behind (our updater stopped): don't blame the station.
+    if (isBc && bcFeedStale && s.silent) {
+      s.notes[0] = `BC data hasn't updated since ${shortTime(bcFile.file.generatedMs, now)} – numbers may be out of date`;
+      s.feedStale = true;
+    }
 
     const c = {
       station, days, hours, score: s, minBase, useHourly,
@@ -236,15 +315,16 @@ export async function conditions(triplets, minBase, useHourly = false) {
 
   saveReadings(updates, now);
   // Nothing downloaded and nothing saved to fall back on: report the error.
-  if (!anyData && (daily.error || hourly?.error)) throw daily.error ?? hourly.error;
+  const firstError = daily.error ?? hourly?.error ?? bcFile?.error;
+  if (!anyData && firstError) throw firstError;
 
-  // Silent stations (no signal for hours): ask the NWS whether it's storming there, so the
-  // note can say "likely snowed in" instead of just "offline". Only silent sites are
-  // checked, so this costs nothing on a normal day.
+  // Silent stations (no signal for hours): ask the weather service whether it's storming
+  // there, so the note can say "likely snowed in" instead of just "offline". Only silent
+  // sites are checked, so this costs nothing on a normal day.
   await Promise.allSettled(result
-    .filter((c) => c.score.silent && !c.score.silent.sensorOnly && c.station.lat != null)
+    .filter((c) => c.score.silent && !c.score.silent.sensorOnly && !c.score.feedStale && c.station.lat != null)
     .map(async (c) => {
-      const storm = await stormInfo(c.station.lat, c.station.lon);
+      const storm = await stormInfo(c.station);
       if (storm.alert || storm.snowNow) c.score.notes[0] = silenceNote(c.score.silent, storm, now);
       c.storm = storm;
     }));
@@ -254,30 +334,40 @@ export async function conditions(triplets, minBase, useHourly = false) {
 
 // ---- Storm check for silent stations -------------------------------------------------
 
-const WINTER_ALERT = /blizzard|winter storm|ice storm|heavy snow|lake effect snow|snow squall|winter weather/i;
+const WINTER_ALERT = /blizzard|winter storm|ice storm|heavy snow|snowfall|lake effect snow|snow squall|winter weather/i;
 const stormCache = new Map(); // "lat,lon" -> { at, info }
 const STORM_CACHE_MS = 30 * 60 * 1000;
 
+/** Most serious first: warnings, then watches, statements and advisories. */
+const seriousness = (e) => (/warning/i.test(e) ? 0 : /watch/i.test(e) ? 1 : 2);
+
 /**
- * { alert: 'Winter Storm Warning' | null, snowNow: boolean } for a location, from NWS active
- * alerts and the current/next forecast period. Cached for 30 minutes.
+ * { alert: 'Winter Storm Warning' | null, snowNow: boolean } for a station, from the
+ * weather service's active alerts and the current/next forecast period (NWS in the US,
+ * Environment Canada in BC). Cached for 30 minutes.
  */
-export async function stormInfo(lat, lon) {
+export async function stormInfo(station) {
+  const { lat, lon } = station;
   const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
   const hit = stormCache.get(key);
   if (hit && Date.now() - hit.at < STORM_CACHE_MS) return hit.info;
 
-  const [alerts, fc] = await Promise.allSettled([
-    getJson(`${NWS}/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`),
-    forecast(lat, lon),
-  ]);
-  const events = alerts.status === 'fulfilled'
-    ? (alerts.value?.features ?? []).map((f) => f.properties?.event).filter(Boolean) : [];
-  // Most serious first: warnings before advisories.
-  const alert = events.filter((e) => WINTER_ALERT.test(e))
-    .sort((a, b) => Number(/advisory/i.test(a)) - Number(/advisory/i.test(b)))[0] ?? null;
-  const periods = fc.status === 'fulfilled' ? fc.value : [];
-  const snowNow = periods.slice(0, 2).some((p) => /snow|blizzard/i.test(p.short));
+  let events = [], periods = [];
+  if (isCanadian(station)) {
+    const place = await ecccNearest(lat, lon).catch(() => null);
+    events = place?.warnings ?? [];
+    periods = place?.periods ?? [];
+  } else {
+    const [alerts, fc] = await Promise.allSettled([
+      getJson(`${NWS}/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`),
+      nwsForecast(lat, lon),
+    ]);
+    events = alerts.status === 'fulfilled'
+      ? (alerts.value?.features ?? []).map((f) => f.properties?.event).filter(Boolean) : [];
+    periods = fc.status === 'fulfilled' ? fc.value : [];
+  }
+  const alert = events.filter((e) => WINTER_ALERT.test(e)).sort((a, b) => seriousness(a) - seriousness(b))[0] ?? null;
+  const snowNow = periods.slice(0, 2).some((p) => /snow|blizzard|flurr/i.test(p.short));
   const info = { alert, snowNow };
   stormCache.set(key, { at: Date.now(), info });
   return info;
@@ -291,7 +381,16 @@ export function cachedConditions(triplet, minBase, useHourly = false) {
 
 // ---- Forecast -----------------------------------------------------------------------
 
-export async function forecast(lat, lon) {
+/** Forecast periods for a station, from the NWS (US) or Environment Canada (BC). */
+export async function forecast(station) {
+  if (isCanadian(station)) return (await ecccNearest(station.lat, station.lon))?.periods ?? [];
+  return nwsForecast(station.lat, station.lon);
+}
+
+/** Which weather service the forecast comes from, for labels. */
+export const forecastSource = (station) => (isCanadian(station) ? 'Environment Canada' : 'NWS');
+
+async function nwsForecast(lat, lon) {
   const point = await getJson(`${NWS}/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
   const url = point?.properties?.forecast;
   if (!url) return [];
@@ -305,4 +404,72 @@ export async function forecast(lat, lon) {
     short: p.shortForecast || '',
     precip: p.probabilityOfPrecipitation?.value ?? null,
   }));
+}
+
+// ---- Environment Canada (BC stations) -------------------------------------------------
+
+const ecccCache = new Map(); // "lat,lon" -> { at, promise }
+const en = (v) => (v && typeof v === 'object' ? v.en : v);
+const titleCase = (s) => s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** "YELLOW WARNING - SNOWFALL" -> "Snowfall Warning"; "SPECIAL WEATHER STATEMENT" as is. */
+export function ecccWarningName(w) {
+  const d = String(en(w?.description) ?? '').trim();
+  const m = /^(?:\w+\s+)?(WARNING|WATCH|ADVISORY|STATEMENT)\s*-\s*(.+)$/i.exec(d);
+  return m ? `${titleCase(m[2])} ${titleCase(m[1])}` : titleCase(d);
+}
+
+/** One Environment Canada city forecast -> SnowScout's forecast periods (°F, mph). */
+export function ecccPeriods(props) {
+  return (props?.forecastGroup?.forecasts ?? []).map((f) => {
+    const t = [].concat(f.temperatures?.temperature ?? [])[0];
+    const c = Number(en(t?.value));
+    const w = [].concat(f.winds?.periods ?? [])[0];
+    const kmh = Number(en(w?.speed?.value));
+    const dir = en(w?.direction);
+    const pop = Number(en(f.abbreviatedForecast?.pop?.value ?? f.abbreviatedForecast?.pop));
+    return {
+      name: en(f.period?.textForecastName) || en(f.period?.value) || '',
+      isDaytime: en(t?.class) !== 'low',
+      temperature: Number.isFinite(c) ? Math.round(c * 9 / 5 + 32) : null,
+      unit: 'F',
+      wind: Number.isFinite(kmh) && kmh > 0 ? `${dir && dir !== 'VR' ? `${dir} ` : ''}${Math.round(kmh / 1.609)} mph` : null,
+      short: en(f.abbreviatedForecast?.textSummary) || en(f.textSummary) || '',
+      precip: Number.isFinite(pop) && pop > 0 ? pop : null,
+    };
+  });
+}
+
+/**
+ * Forecast and active warnings for the Environment Canada forecast location nearest a point:
+ * { place, periods, warnings: ['Snowfall Warning', ...] }. Cached for 30 minutes.
+ */
+function ecccNearest(lat, lon) {
+  const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+  const hit = ecccCache.get(key);
+  if (hit && Date.now() - hit.at < STORM_CACHE_MS) return hit.promise;
+  const promise = (async () => {
+    // Widen the search until a forecast location turns up (most stations have a town
+    // within ~80 km); small boxes keep the download small.
+    for (const d of [0.75, 2, 4]) {
+      const bbox = [lon - d * 1.5, lat - d, lon + d * 1.5, lat + d].map((v) => v.toFixed(3)).join(',');
+      const res = await getJson(`${ECCC}?f=json&limit=50&bbox=${bbox}`);
+      const feats = (res?.features ?? []).filter((f) => f.geometry?.coordinates);
+      if (!feats.length) continue;
+      const dist = (f) => {
+        const [x, y] = f.geometry.coordinates;
+        return (x - lon) ** 2 * Math.cos(lat * Math.PI / 180) ** 2 + (y - lat) ** 2;
+      };
+      const best = feats.sort((a, b) => dist(a) - dist(b))[0];
+      return {
+        place: en(best.properties?.name) ?? null,
+        periods: ecccPeriods(best.properties),
+        warnings: [].concat(best.properties?.warnings ?? []).map(ecccWarningName).filter(Boolean),
+      };
+    }
+    return null;
+  })();
+  ecccCache.set(key, { at: Date.now(), promise });
+  promise.catch(() => ecccCache.delete(key));
+  return promise;
 }

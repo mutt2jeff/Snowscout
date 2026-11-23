@@ -4,11 +4,12 @@
 // App files are "network first": with a connection, the newest version is always loaded
 // (and saved). With no connection, or a signal too slow to answer within a few seconds,
 // the saved copy is used instead. Snow data, forecasts and map tiles always come
-// straight from the network and are not handled here.
+// straight from the network and are not handled here, except the BC snow files
+// (data/bc-*.json), which live on this site and so are treated like app files.
 //
 // Bump VERSION whenever you publish changed files, so old saved copies get cleaned up.
 
-const VERSION = 'snowscout-web-v6'; // v2 hourly, v3 noindex, v4 network-first, v5 saved readings + retries, v6 silent stations
+const VERSION = 'snowscout-web-v7'; // v2 hourly, v3 noindex, v4 network-first, v5 saved readings + retries, v6 silent stations, v7 BC stations
 const NETWORK_TIMEOUT_MS = 4000;
 const SHELL = [
   './',
@@ -19,6 +20,7 @@ const SHELL = [
   'js/scorer.js',
   'js/store.js',
   'js/readings.js',
+  'js/bc.js',
   'vendor/leaflet/leaflet.js',
   'vendor/leaflet/leaflet.css',
   'manifest.webmanifest',

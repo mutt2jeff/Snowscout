@@ -43,6 +43,8 @@ const fmtShort = (iso) => isoToDate(iso).toLocaleDateString('en-US', { month: 's
 function readingTime(s, c = {}) {
   if (s.source === 'hourly' && s.asOfMs) {
     const when = shortTime(s.asOfMs);
+    // Our BC data feed is behind: that's not the station's fault.
+    if (s.feedStale) return `Last update ${when} · BC data delayed`;
     // Silent station (snowed in / no signal): say so plainly, it's not current.
     if (s.silent) return s.silent.sensorOnly ? `Depth sensor silent since ${when}` : `Last report ${when} · no signal`;
     return `As of ${when}${c.hourlyFromSave ? ' (saved)' : ''}`;
@@ -126,7 +128,7 @@ function renderDashboard() {
         <div class="empty">
           ${icon('snow', 72)}
           <h2>Where's the best snow?</h2>
-          <p>Pick the SNOTEL stations near the areas you ride. SnowScout pulls their latest snow depth,
+          <p>Pick the SNOTEL or BC snow stations near the areas you ride. SnowScout pulls their latest snow depth,
              new snow, and temperature and ranks them for sledding.</p>
           <a class="btn" href="#/sites">${icon('add')}Choose sites</a>
         </div>`;
@@ -139,7 +141,7 @@ function renderDashboard() {
     body.innerHTML = `
       ${dash.loading && dash.sites.length ? '<div class="progress" aria-label="Updating"></div>' : ''}
       ${dash.error ? errorBanner(dash.error) : ''}
-      ${usedSaved ? `<p class="small muted">The NRCS server didn't answer for some readings, so the last ones saved on
+      ${usedSaved ? `<p class="small muted">The snow data server didn't answer for some readings, so the last ones saved on
         this phone are shown (marked "saved"). Tap refresh to try again.</p>` : ''}
       <div class="chips" role="group" aria-label="Sort">
         ${SORTS.map((s) => `<button type="button" class="chip" data-sort="${s.key}" aria-pressed="${s.key === dash.sort}">${s.label}</button>`).join('')}
@@ -205,7 +207,7 @@ function siteCard(c, rank) {
 const picker = { mode: 'map', query: '', state: null, mineOnly: false };
 
 const USGS_TOPO = 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}';
-const DEFAULT_CENTER = [43.5, -112.0];
+const DEFAULT_CENTER = [45.5, -114.0]; // the western US and southern BC
 const DEFAULT_ZOOM = 5;
 const MAX_ZOOM = 12; // county level: enough to pick sites, keeps downloads small (matches Android)
 
@@ -218,7 +220,7 @@ function renderSites() {
 
   app.innerHTML = `
     <div class="screen sites-screen">
-      <header class="topbar has-back">${backButton()}<h1>Choose SNOTEL sites</h1></header>
+      <header class="topbar has-back">${backButton()}<h1>Choose snow stations</h1></header>
       <div class="controls">
         <label class="search">
           ${icon('search', 20)}
@@ -236,7 +238,7 @@ function renderSites() {
           <div class="map" id="map"></div>
           <div class="legend" aria-hidden="true">
             <div><i class="dot" style="background:var(--mine)"></i>My sites</div>
-            <div><i class="dot" style="background:#1E4E79"></i>SNOTEL site</div>
+            <div><i class="dot" style="background:#1E4E79"></i>Snow station</div>
           </div>
           <div class="card preview" id="preview" hidden></div>
         </div>
@@ -264,7 +266,7 @@ function renderSites() {
       (picker.state == null || st.state === picker.state) &&
       (!picker.mineOnly || sel.has(st.triplet)) &&
       (term === '' || st.name.toLowerCase().includes(term) ||
-        (st.county ?? '').toLowerCase().includes(term) || st.id === term));
+        (st.county ?? '').toLowerCase().includes(term) || st.id.toLowerCase() === term));
   }
 
   function drawChips() {
@@ -272,7 +274,7 @@ function renderSites() {
     const n = getSettings().selected.length;
     chipsEl.innerHTML =
       `<button type="button" class="chip" data-mine aria-pressed="${picker.mineOnly}">My sites (${n})</button>` +
-      `<button type="button" class="chip" data-state="" aria-pressed="${picker.state == null}">All states</button>` +
+      `<button type="button" class="chip" data-state="" aria-pressed="${picker.state == null}">All</button>` +
       states.map((s) => `<button type="button" class="chip" data-state="${esc(s)}" aria-pressed="${picker.state === s}">${esc(s)}</button>`).join('');
   }
 
@@ -502,12 +504,13 @@ function renderDetail(triplet) {
     if (!c) { body.innerHTML = errorBanner('No data for this site'); return; }
     app.querySelector('#title').textContent = c.station.name;
     document.title = `${c.station.name} · SnowScout`;
+    const link = api.sourceLink(c.station);
     app.querySelector('#ext').innerHTML =
-      `<a class="icon-btn" href="${api.nrcsUrl(c.station)}" target="_blank" rel="noopener" aria-label="Open NRCS site page">${icon('globe')}</a>`;
+      `<a class="icon-btn" href="${esc(link.url)}" target="_blank" rel="noopener" aria-label="${esc(link.label)}">${icon('globe')}</a>`;
     drawDetail(c, { loading: c.station.lat != null });
     if (c.station.lat == null) return;
     try {
-      const fc = await api.forecast(c.station.lat, c.station.lon);
+      const fc = await api.forecast(c.station);
       if (alive) drawDetail(c, { periods: fc });
     } catch (e) {
       if (alive) drawDetail(c, { error: e.message });
@@ -564,7 +567,7 @@ function renderDetail(triplet) {
       <h2 class="section-title">Snow depth – last ${c.days.length} days</h2>
       <section class="card chart">${depthChart(c.days)}</section>
 
-      <h2 class="section-title">NWS forecast</h2>
+      <h2 class="section-title">${api.forecastSource(c.station)} forecast</h2>
       ${forecastHtml}
 
       <h2 class="section-title">Daily observations</h2>
@@ -582,8 +585,10 @@ function renderDetail(triplet) {
         </table>
       </section>
 
-      <p class="footnote">Snow data: USDA NRCS SNOTEL (provisional, subject to revision). Forecast: National Weather Service.
-        SnowScout doesn't assess avalanche danger – check your local avalanche center before riding.</p>`;
+      <p class="footnote">${api.isCanadian(c.station)
+        ? 'Snow data: BC Ministry of Environment, Automated Snow Weather Stations (raw readings, not quality-checked), under the Open Government Licence – British Columbia. Forecast: Environment and Climate Change Canada.'
+        : 'Snow data: USDA NRCS SNOTEL (provisional, subject to revision). Forecast: National Weather Service.'}
+        SnowScout doesn't assess avalanche danger – check your local avalanche forecast before riding.</p>`;
   }
 
   body.addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) load(); });
@@ -729,8 +734,11 @@ function renderSettings() {
         </section>
 
         <h2 class="section-title">Data sources</h2>
-        <p class="small muted">Snow and temperature: USDA NRCS SNOTEL network. Values are provisional and stations
-          occasionally report bad readings. Forecasts: National Weather Service. Map: USGS The National Map.
+        <p class="small muted">Snow and temperature: USDA NRCS SNOTEL network (US) and the BC Ministry of
+          Environment's Automated Snow Weather Stations (British Columbia, Open Government Licence – British
+          Columbia; refreshed about every 30 minutes). Values are provisional and stations occasionally report bad
+          readings. Forecasts: National Weather Service (US), Environment and Climate Change Canada (BC).
+          Map: USGS The National Map.
           The web version can't send fresh-snow alerts; open it to check conditions. SnowScout doesn't assess
           avalanche danger – check your local avalanche center before riding.</p>
       </main>
