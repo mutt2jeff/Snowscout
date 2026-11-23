@@ -3,6 +3,7 @@
 
 import { addDays, score, scoreHourly, stationTimeToMs, todayIso } from './scorer.js';
 import { load, save } from './store.js';
+import { mergeHours, saveReadings, savedReadings } from './readings.js';
 
 const AWDB = 'https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1';
 const NWS = 'https://api.weather.gov';
@@ -12,15 +13,30 @@ const STATION_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const HISTORY_DAYS = 14;
 const BATCH = 40;
 
+// The NRCS server often answers "503 Service Unavailable" when busy, but a retry a moment
+// later usually works (measured: ~half of requests 503 at busy times, each failing in
+// ~0.2 s). So every request gets two quick retries before we give up.
+const RETRY_DELAYS_MS = [700, 1800];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function getJson(url) {
-  let res;
-  try {
-    res = await fetch(url, { headers: { Accept: 'application/json' } });
-  } catch {
-    throw new Error(navigator.onLine === false ? 'No internet connection' : 'Could not reach the server');
+  let lastError;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt) await sleep(RETRY_DELAYS_MS[attempt - 1]);
+    let res;
+    try {
+      res = await fetch(url, { headers: { Accept: 'application/json' } });
+    } catch {
+      // Includes a 503 the browser couldn't read. Offline: no point retrying.
+      lastError = new Error(navigator.onLine === false ? 'No internet connection' : 'Could not reach the server');
+      if (navigator.onLine === false) break;
+      continue;
+    }
+    if (res.ok) return res.json();
+    lastError = new Error(`Server error (${res.status}) – try again shortly`);
+    if (res.status < 500 && res.status !== 429) break; // a real error, not "busy"
   }
-  if (!res.ok) throw new Error(`Server error (${res.status}) – try again shortly`);
-  return res.json();
+  throw lastError;
 }
 
 // ---- Stations ---------------------------------------------------------------------
@@ -136,43 +152,91 @@ const dataUrl = (triplets, elements, duration, begin, end) =>
   `&duration=${duration}&beginDate=${begin}&endDate=${end}`;
 
 /**
+ * Run one request per group of up to 40 sites. Returns the data by triplet, plus the
+ * triplets whose request failed even after retries, and the last error.
+ */
+async function fetchGroups(triplets, urlFor) {
+  const groups = chunked(triplets);
+  const results = await Promise.allSettled(groups.map((g) => getJson(urlFor(g))));
+  const data = new Map();
+  const failed = new Set();
+  let error = null;
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') for (const s of r.value ?? []) data.set(s.stationTriplet, s);
+    else { groups[i].forEach((t) => failed.add(t)); error = r.reason; }
+  });
+  return { data, failed, error };
+}
+
+/**
  * Latest conditions for each triplet, best score first.
- * With useHourly, the score uses the latest hourly readings (falling back to daily per
- * site when a station has no recent hourly data, or for everything if the hourly
- * request fails). Daily readings are always fetched too, for the chart and table.
+ *
+ * Daily readings are always fetched (chart, table, fallback). With useHourly, hourly
+ * readings are fetched too, and the score uses whichever is newer.
+ *
+ * Every good download is saved on the phone. When NRCS doesn't answer (even after
+ * retries), the saved readings are used instead, up to the last hour they cover, and the
+ * site is marked so the screen can say "saved". Once the phone has the earlier hours, only
+ * the latest day of hourly readings is requested, which keeps requests small.
  */
 export async function conditions(triplets, minBase, useHourly = false) {
   if (!triplets.length) return [];
   const stations = await allStations().catch(() => []);
   const byTriplet = new Map(stations.map((s) => [s.triplet, s]));
   const today = todayIso();
-  const begin = addDays(today, -HISTORY_DAYS);
-
-  const dailyReq = Promise.all(chunked(triplets).map((c) =>
-    getJson(dataUrl(c, 'SNWD,WTEQ,TOBS,TMAX,TMIN,PREC', 'DAILY', begin, today)),
-  )).then((r) => r.flat());
-  // 3 days back covers the 72h baseline; "tomorrow" covers phones in time zones ahead of
-  // the stations' Pacific Standard Time.
-  const hourlyReq = useHourly
-    ? Promise.all(chunked(triplets).map((c) =>
-      getJson(dataUrl(c, 'SNWD,TOBS,WTEQ', 'HOURLY', addDays(today, -3), addDays(today, 1))),
-    )).then((r) => r.flat()).catch(() => null)
-    : Promise.resolve(null);
-
-  const [daily, hourly] = await Promise.all([dailyReq, hourlyReq]);
-  const dailyBy = new Map(daily.map((r) => [r.stationTriplet, r]));
-  const hourlyBy = hourly ? new Map(hourly.map((r) => [r.stationTriplet, r])) : null;
   const now = Date.now();
+  const saved = new Map(triplets.map((t) => [t, savedReadings(t)]));
 
+  // Do we already have the older hours (back past 72h) and something from the last day?
+  const hasRecentHours = (t) => {
+    const h = saved.get(t)?.hours;
+    return !!h?.length && h[0].t <= now - 70 * HOUR && h[h.length - 1].t >= now - 20 * HOUR;
+  };
+
+  const [daily, hourly] = await Promise.all([
+    fetchGroups(triplets, (g) => dataUrl(g, 'SNWD,WTEQ,TOBS,TMAX,TMIN,PREC', 'DAILY', addDays(today, -HISTORY_DAYS), today)),
+    useHourly
+      // 3 days back covers the 72h baseline (1 day if saved hours cover the rest);
+      // "tomorrow" covers phones in time zones ahead of the stations' Pacific Standard Time.
+      ? fetchGroups(triplets, (g) => dataUrl(g, 'SNWD,TOBS,WTEQ', 'HOURLY',
+        addDays(today, g.every(hasRecentHours) ? -1 : -3), addDays(today, 1)))
+      : Promise.resolve(null),
+  ]);
+
+  const updates = {};
+  let anyData = false;
   const result = triplets.map((t) => {
     const station = byTriplet.get(t) ?? stationFromTriplet(t);
-    const days = toDays(dailyBy.get(t));
-    const hours = hourlyBy ? toHours(hourlyBy.get(t), station.tz ?? defaultTz(station.state)) : [];
-    const s = useHourly ? scoreHourly(hours, days, now, minBase) : score(days, today, minBase);
-    const c = { station, days, hours, score: s, minBase, useHourly, hourlyFailed: useHourly && !hourly };
+    const tz = station.tz ?? defaultTz(station.state);
+    const prev = saved.get(t);
+
+    const dailyFailed = daily.failed.has(t);
+    const days = dailyFailed ? (prev?.days ?? []) : toDays(daily.data.get(t));
+
+    let hours = prev?.hours ?? [];
+    const hourlyFailed = !!hourly && hourly.failed.has(t);
+    if (hourly && !hourlyFailed) hours = mergeHours(hours, toHours(hourly.data.get(t), tz), now);
+
+    updates[t] = { days, hours };
+    if (days.length || hours.length) anyData = true;
+
+    let s = useHourly ? scoreHourly(hours, days, now, minBase, tz) : score(days, today, minBase);
+    const couldntLoad = (dailyFailed || hourlyFailed) && !days.length && !hours.length;
+    if (couldntLoad) s = { ...s, notes: ["Couldn't reach NRCS – try refreshing"] };
+
+    const c = {
+      station, days, hours, score: s, minBase, useHourly,
+      // Which parts of the shown numbers came from readings saved earlier on this phone.
+      dailyFromSave: dailyFailed && days.length > 0,
+      hourlyFromSave: hourlyFailed && s.source === 'hourly',
+    };
     conditionsCache.set(t, c);
     return c;
   });
+
+  saveReadings(updates, now);
+  // Nothing downloaded and nothing saved to fall back on: report the error.
+  if (!anyData && (daily.error || hourly?.error)) throw daily.error ?? hourly.error;
   return result.sort((a, b) => b.score.score - a.score.score);
 }
 

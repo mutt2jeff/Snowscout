@@ -23,8 +23,11 @@ const DEPTH_WEIGHT = 0.55;
 const FRESH_WEIGHT = 0.30;
 const TEMP_WEIGHT = 0.15;
 
-/** Hourly readings older than this are ignored and the daily reading is used instead. */
-export const HOURLY_MAX_AGE_HOURS = 12;
+/**
+ * Hourly readings (including ones saved on the phone when NRCS is down) are used until a
+ * newer daily reading exists, but never once they are older than this.
+ */
+export const HOURLY_MAX_AGE_HOURS = 48;
 const HOUR = 3600000;
 
 export const Rating = Object.freeze({
@@ -162,6 +165,14 @@ export function stationTimeToMs(stamp, tz) {
   return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - tz * HOUR : null;
 }
 
+/**
+ * When a daily value was measured: the daily value for date D is the reading at midnight
+ * at the END of D (checked against hourly data: daily Nov 21 = hourly Nov 22 00:00).
+ */
+export function dailyReadingMs(isoDate, tz) {
+  return stationTimeToMs(`${addDays(isoDate, 1)} 00:00`, tz);
+}
+
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
   const m = s.length >> 1;
@@ -178,13 +189,13 @@ const median = (xs) => {
  * @param hours [{t: ms since epoch, depth, tobs, swe}]
  * @param nowMs current time, ms since epoch
  */
-export function currentFromHourly(hours, nowMs = Date.now()) {
+export function currentFromHourly(hours, nowMs = Date.now(), maxAgeHours = HOURLY_MAX_AGE_HOURS) {
   const withDepth = hours
     .filter((h) => h.depth != null && h.t <= nowMs + HOUR)
     .sort((a, b) => a.t - b.t);
   if (!withDepth.length) return null;
   const latestT = withDepth[withDepth.length - 1].t;
-  if (nowMs - latestT > HOURLY_MAX_AGE_HOURS * HOUR) return null;
+  if (nowMs - latestT > maxAgeHours * HOUR) return null;
 
   // Depth around a moment: median of readings within the 3 hours ending at `t` (+1h slack
   // for the older baselines, since stations occasionally skip an hour).
@@ -214,14 +225,15 @@ export function currentFromHourly(hours, nowMs = Date.now()) {
 }
 
 /**
- * Score from hourly readings, falling back to the daily score when there are no
- * recent hourly readings. Missing hourly pieces (temperature, 72h baseline) fall back
- * to the daily values.
+ * Score from hourly readings when they are newer than the daily reading, otherwise the
+ * daily score. Missing hourly pieces (temperature, 72h baseline) fall back to the daily
+ * values. tz: hours from UTC the station's readings are stamped in.
  */
-export function scoreHourly(hours, days, nowMs = Date.now(), minBaseIn = DEFAULT_MIN_BASE_IN) {
+export function scoreHourly(hours, days, nowMs = Date.now(), minBaseIn = DEFAULT_MIN_BASE_IN, tz = -8) {
   const daily = score(days, localIso(new Date(nowMs)), minBaseIn);
   const cur = currentFromHourly(hours, nowMs);
   if (!cur) return daily;
+  if (daily.asOf && daily.depthIn != null && cur.asOfMs < dailyReadingMs(daily.asOf, tz)) return daily;
 
   const inputs = {
     depth: cur.depth,

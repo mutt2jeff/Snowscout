@@ -17,7 +17,8 @@
   <script type="module">
     // Same cases as the Android app's SnowScorerTest.kt, so both scorers stay identical.
     import { score, fullDepthFor, addDays, Rating, RIDEABLE_FLOOR, DEFAULT_MIN_BASE_IN,
-             currentFromHourly, scoreHourly, stationTimeToMs } from '../js/scorer.js';
+             currentFromHourly, scoreHourly, stationTimeToMs, dailyReadingMs } from '../js/scorer.js';
+    import { mergeHours } from '../js/readings.js';
 
     const today = '2026-01-10';
     const series = (depths, temp = 20) =>
@@ -113,21 +114,44 @@
       const s = scoreHourly(hourly(flat(80, 18)), [], NOW, 18); // 80h of steady 18", 20°F
       eq(s.source, 'hourly'); eq(s.score, 32); eq(s.rating, Rating.MARGINAL);
     });
-    test('stale hourly readings fall back to the daily reading', () => {
-      const days = series([30, 30, 30, 30]);
-      const s = scoreHourly(hourly(flat(30, 40), { lagHours: 15 }), days, NOW, 18);
+    // A daily value for date D is the reading at midnight ending D, so at NOW (4:30 PM
+    // Nov 22) the newest daily value is Nov 21's, measured at 00:00 PST Nov 22.
+    const dayRow = (date, depth, tobs = 20) => ({ date, depth, tobs, swe: 1.4, tmax: null, tmin: null, prec: null });
+
+    test('a daily value is the reading at midnight at the end of that day', () => {
+      eq(dailyReadingMs('2026-11-21', -8), Date.UTC(2026, 10, 22, 8, 0)); // 00:00 PST Nov 22
+    });
+    test('hourly readings older than the daily reading fall back to daily', () => {
+      // last hourly reading 20h ago (8:30 PM Nov 21) is older than the Nov 21 daily (midnight)
+      const days = [dayRow('2026-11-20', 30), dayRow('2026-11-21', 30)];
+      const s = scoreHourly(hourly(flat(30, 40), { lagHours: 20 }), days, NOW, 18);
       eq(s.source, 'daily'); eq(s.depthIn, 30);
+    });
+    test('saved hourly readings a few hours old are still used (NRCS down)', () => {
+      // NRCS stopped answering 6h ago; the saved readings are still newer than the daily one
+      const days = [dayRow('2026-11-20', 6), dayRow('2026-11-21', 6)];
+      const s = scoreHourly(hourly([...flat(30, 6), 8, 9, 9, 9], { lagHours: 6 }), days, NOW, 18);
+      eq(s.source, 'hourly'); eq(s.depthIn, 9); eq(s.asOfMs, NOW - 6 * HOUR, 'shows the time of the last saved reading');
+    });
+    test('hourly readings over 48 hours old are never used', () => {
+      eq(currentFromHourly(hourly(flat(10, 30), { lagHours: 50 }), NOW), null);
     });
     test("today's snow shows up hourly before the daily reading has it", () => {
       // Daily (midnight) says 6"; hourly shows it snowed to 9" this afternoon.
-      const days = [{ date: '2026-11-22', depth: 6, tobs: 18, swe: 1.4, tmax: null, tmin: null, prec: null },
-                    { date: '2026-11-21', depth: 6, tobs: 20, swe: 1.4, tmax: null, tmin: null, prec: null }];
+      const days = [dayRow('2026-11-20', 6), dayRow('2026-11-21', 6, 18)];
       const hrs = hourly([...flat(30, 6), 7, 8, 9, 9, 9]);
       const d = scoreHourly([], days, NOW, 18), h = scoreHourly(hrs, days, NOW, 18);
       eq(d.depthIn, 6, 'daily'); eq(h.depthIn, 9, 'hourly'); eq(h.new24In, 3, 'hourly 24h');
     });
+    test('saved and new hourly readings merge: new wins, old drop off', () => {
+      const t = (h) => NOW - h * HOUR;
+      const savedH = [{ t: t(90), depth: 1 }, { t: t(2), depth: 5 }, { t: t(1), depth: 6 }];
+      const freshH = [{ t: t(1), depth: 7 }, { t: t(0), depth: 8 }];
+      const merged = mergeHours(savedH, freshH, NOW);
+      eq(merged.map((h) => h.depth).join(','), '5,7,8', 'dropped 90h-old, replaced t-1h, added t-0');
+    });
     test('missing hourly temperature falls back to the daily one', () => {
-      const days = [{ date: '2026-11-22', depth: 20, tobs: 15, swe: null, tmax: null, tmin: null, prec: null }];
+      const days = [dayRow('2026-11-21', 20, 15)];
       const s = scoreHourly(hourly(flat(10, 20)).map((h) => ({ ...h, tobs: null })), days, NOW, 18);
       eq(s.source, 'hourly'); eq(s.tempF, 15);
     });

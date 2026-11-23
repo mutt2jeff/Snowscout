@@ -36,14 +36,18 @@ const degF = (v) => (v == null ? '–' : `${Math.round(v)}°F`);
 const isoToDate = (iso) => new Date(iso + 'T12:00:00');
 const fmtShort = (iso) => isoToDate(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-/** "As of 4:00 PM" for hourly scores (in the phone's time zone), "Daily reading · Nov 21" otherwise. */
-function readingTime(s) {
+/**
+ * "As of 4:00 PM" for hourly scores (in the phone's time zone), "Daily reading · Nov 21"
+ * otherwise; "(saved)" when NRCS didn't answer and the phone's saved readings are shown.
+ */
+function readingTime(s, c = {}) {
   if (s.source === 'hourly' && s.asOfMs) {
     const d = new Date(s.asOfMs);
     const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    return localIso(d) === localIso() ? `As of ${time}` : `As of ${d.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+    const when = localIso(d) === localIso() ? time : `${d.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+    return `As of ${when}${c.hourlyFromSave ? ' (saved)' : ''}`;
   }
-  return s.asOf ? `Daily reading · ${fmtShort(s.asOf)}` : '';
+  return s.asOf ? `Daily reading · ${fmtShort(s.asOf)}${c.dailyFromSave ? ' (saved)' : ''}` : '';
 }
 
 const badge = (s, large = false) =>
@@ -131,11 +135,12 @@ function renderDashboard() {
 
     const sort = SORTS.find((s) => s.key === dash.sort) ?? SORTS[0];
     const sorted = [...dash.sites].sort((a, b) => sort.by(b) - sort.by(a));
-    const hourlyDown = dash.sites.some((c) => c.hourlyFailed);
+    const usedSaved = dash.sites.some((c) => c.hourlyFromSave || c.dailyFromSave);
     body.innerHTML = `
       ${dash.loading && dash.sites.length ? '<div class="progress" aria-label="Updating"></div>' : ''}
       ${dash.error ? errorBanner(dash.error) : ''}
-      ${hourlyDown ? '<p class="small muted">Hourly readings are unavailable right now, so these use the daily readings.</p>' : ''}
+      ${usedSaved ? `<p class="small muted">The NRCS server didn't answer for some readings, so the last ones saved on
+        this phone are shown (marked "saved"). Tap refresh to try again.</p>` : ''}
       <div class="chips" role="group" aria-label="Sort">
         ${SORTS.map((s) => `<button type="button" class="chip" data-sort="${s.key}" aria-pressed="${s.key === dash.sort}">${s.label}</button>`).join('')}
       </div>
@@ -190,7 +195,7 @@ function siteCard(c, rank) {
           ${metric('Temp', degF(s.tempF))}
         </div>
         ${s.notes[0] ? `<div class="note">${esc(s.notes[0])}</div>` : ''}
-        <div class="asof">${esc(readingTime(s))}</div>
+        <div class="asof">${esc(readingTime(s, c))}</div>
       </div>
     </a>`;
 }
@@ -376,7 +381,7 @@ function renderSites() {
     if (s) {
       info = `<div class="line">Base ${inches(s.depthIn)} · ${newInches(s.new72In)} in 72h · ${degF(s.tempF)}</div>` +
         (s.notes[0] ? `<div class="note" style="margin-top:2px">${esc(s.notes[0])}</div>` : '') +
-        `<div class="asof">${esc(readingTime(s))}</div>`;
+        `<div class="asof">${esc(readingTime(s, c))}</div>`;
     } else if (status === 'loading') {
       info = '<div class="small muted">Loading latest snow…</div>';
     } else {
@@ -539,7 +544,7 @@ function renderDetail(triplet) {
           ${badge(s, true)}
           <div>
             <div>${esc(api.stationSubtitle(c.station))}</div>
-            ${s.asOf ? `<div class="small muted">${esc(readingTime(s))}${s.source === 'hourly' ? ' (hourly)' : ''}</div>` : ''}
+            ${s.asOf ? `<div class="small muted">${esc(readingTime(s, c))}${s.source === 'hourly' ? ' · hourly' : ''}</div>` : ''}
             <div class="notes">${s.notes.map((n) => `• ${esc(n)}`).join('<br>')}</div>
           </div>
         </div>
