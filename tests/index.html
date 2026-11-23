@@ -21,7 +21,7 @@
     import { mergeHours } from '../js/readings.js';
     import { parseWideCsv, buildBcData, bcHours, bcDays, bcTriplet, isBcTriplet } from '../js/bc.js';
     import { ecccWarningName, ecccPeriods } from '../js/api.js';
-    import { dangerLevel, inGeometry, milesToGeometry, findZone, htmlToText, usForecastFrom, caForecastFrom } from '../js/avalanche.js';
+    import { dangerLevel, inGeometry, milesToGeometry, findZone, htmlToText, usForecastFrom, caForecastFrom, shortRegionName } from '../js/avalanche.js';
 
     const today = '2026-01-10';
     const series = (depths, temp = 20) =>
@@ -325,11 +325,17 @@
       const band = (v) => ({ rating: { value: v, display: v } });
       const early = caForecastFrom({ url: 'https://avalanche.ca/f/1', report: { title: 'A-'.repeat(50), highlights: '<p>Daily forecasts begin Nov 25.</p>',
         dangerRatings: [{ ratings: { alp: band('earlyseason'), tln: band('earlyseason'), btl: band('earlyseason') } }] } });
-      eq(early.offSeason, true); eq(early.overall, null); eq(early.zone, 'All BC forecast regions'); eq(early.summary, 'Daily forecasts begin Nov 25.');
+      eq(early.offSeason, true); eq(early.overall, null); eq(early.zone, 'All Avalanche Canada regions'); eq(early.summary, 'Daily forecasts begin Nov 25.');
       const live = caForecastFrom({ url: 'https://avalanche.ca/f/2', report: { title: 'Glacier', problems: [{ type: { display: 'Storm slabs' } }],
         dangerRatings: [{ ratings: { alp: band('considerable'), tln: band('moderate'), btl: band('low') } }, { ratings: { alp: band('high'), tln: band('considerable'), btl: band('moderate') } }] } });
       eq(live.overall, 3); eq(live.tomorrow[0].level, 4); eq(live.zone, 'Glacier'); eq(live.problems[0].name, 'Storm slabs'); eq(live.offSeason, false);
       eq(caForecastFrom({ id: '', url: '', report: { title: '', dangerRatings: null } }), null);
+      eq(live.center, 'Avalanche Canada');
+      eq(caForecastFrom({ url: 'u', owner: { display: 'Parks Canada' }, report: { title: 'Jasper', dangerRatings: [] } }).center, 'Parks Canada');
+    });
+    test('long Avalanche Canada region lists are shortened', () => {
+      eq(shortRegionName('Glacier'), 'Glacier');
+      eq(shortRegionName('Brazeau-Churchill-Cirrus-Wilson-Fryatt-Icefields-Maligne-Marmot-Miette Lake-Pyramid'), 'Brazeau, Churchill, Cirrus and 7 more areas');
     });
 
     let passed = 0;

@@ -9,6 +9,9 @@
 const US_MAP_URL = 'https://api.avalanche.org/v2/public/products/map-layer';
 const US_PRODUCT_URL = 'https://api.avalanche.org/v2/public/product';
 const CA_POINT_URL = 'https://api.avalanche.ca/forecasts/en/products/point';
+const CA_PRODUCT_URL = 'https://api.avalanche.ca/forecasts/en/products';
+const CA_AREAS_URL = 'https://api.avalanche.ca/forecasts/en/areas';
+const CA_METADATA_URL = 'https://api.avalanche.ca/forecasts/en/metadata';
 export const US_HOME = { url: 'https://avalanche.org/', label: 'avalanche.org' };
 export const CA_HOME = { url: 'https://avalanche.ca/', label: 'Avalanche Canada' };
 
@@ -179,7 +182,18 @@ async function usForecast(lat, lon) {
   return usForecastFrom(hit.feature, hit.distanceMi, product);
 }
 
-/** Turns Avalanche Canada's point forecast into our shape (null when nothing covers it). */
+/**
+ * Avalanche Canada titles a forecast with every area it covers, joined by "-" (the
+ * early-season bulletin lists ~90). Keep the first few so it fits on a phone.
+ */
+export function shortRegionName(title) {
+  if (title.length <= 60) return title;
+  const parts = title.split('-').map((s) => s.trim()).filter(Boolean);
+  if (parts.length > 30) return 'All Avalanche Canada regions';
+  return `${parts.slice(0, 3).join(', ')} and ${parts.length - 3} more areas`;
+}
+
+/** Turns an Avalanche Canada forecast into our shape (null when nothing covers it). */
 export function caForecastFrom(j) {
   const r = j?.report;
   if (!r || !j.url || (!r.title && !r.dangerRatings)) return null;
@@ -203,9 +217,8 @@ export function caForecastFrom(j) {
   const expiresMs = Date.parse(r.validUntil ?? '') || null;
   return {
     region: 'CA',
-    // Early-season bulletins cover every region at once and list them all in the title.
-    zone: title.length > 70 ? 'All BC forecast regions' : title,
-    center: 'Avalanche Canada',
+    zone: shortRegionName(title),
+    center: j.owner?.display || 'Avalanche Canada',
     url: j.url,
     distanceMi: 0,
     offSeason: early,
@@ -220,9 +233,30 @@ export function caForecastFrom(j) {
   };
 }
 
+let caAreas = null; // { at, promise } -> { features, metadata }
+function caAreaList() {
+  if (!caAreas || Date.now() - caAreas.at > CACHE_MS) {
+    const promise = Promise.all([getJson(CA_AREAS_URL), getJson(CA_METADATA_URL)])
+      .then(([areas, metadata]) => ({ features: areas?.features ?? [], metadata: Array.isArray(metadata) ? metadata : [] }));
+    caAreas = { at: Date.now(), promise };
+    promise.catch(() => { if (caAreas?.promise === promise) caAreas = null; });
+  }
+  return caAreas.promise;
+}
+
 async function caForecast(lat, lon) {
   const q = new URLSearchParams({ lat: lat.toFixed(4), long: lon.toFixed(4) });
-  return caForecastFrom(await getJson(`${CA_POINT_URL}?${q}`));
+  const direct = caForecastFrom(await getJson(`${CA_POINT_URL}?${q}`));
+  if (direct) return direct;
+  // Avalanche Canada's point lookup misses sites on or just past a region's edge
+  // (e.g. Yellowhead Lake on the Jasper boundary), so check the region outlines too.
+  const { features, metadata } = await caAreaList();
+  const hit = findZone(features, lat, lon);
+  const meta = hit && metadata.find((m) => m.area?.id === hit.feature.id);
+  if (!meta?.product?.slug) return null;
+  const j = await getJson(`${CA_PRODUCT_URL}/${encodeURIComponent(meta.product.slug)}`);
+  const f = caForecastFrom({ ...j, url: j.url || meta.url, owner: j.owner || meta.owner });
+  return f && { ...f, distanceMi: hit.distanceMi };
 }
 
 const byStation = new Map(); // triplet -> { at, promise }
