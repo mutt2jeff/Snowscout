@@ -9,7 +9,7 @@
 //
 // Bump VERSION whenever you publish changed files, so old saved copies get cleaned up.
 
-const VERSION = 'snowscout-web-v7.4'; // v2 hourly, v3 noindex, v4 network-first, v5 saved readings + retries, v6 silent stations, v7 BC stations, v7.3 visit counts, v7.4 readable count names
+const VERSION = 'snowscout-web-v8'; // v8 avalanche forecasts,v2 hourly, v3 noindex, v4 network-first, v5 saved readings + retries, v6 silent stations, v7 BC stations, v7.3 visit counts, v7.4 readable count names
 const NETWORK_TIMEOUT_MS = 4000;
 const SHELL = [
   './',
@@ -21,6 +21,7 @@ const SHELL = [
   'js/store.js',
   'js/readings.js',
   'js/bc.js',
+  'js/avalanche.js',
   'vendor/leaflet/leaflet.js',
   'vendor/leaflet/leaflet.css',
   'manifest.webmanifest',

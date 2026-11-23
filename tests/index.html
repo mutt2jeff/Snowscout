@@ -21,6 +21,7 @@
     import { mergeHours } from '../js/readings.js';
     import { parseWideCsv, buildBcData, bcHours, bcDays, bcTriplet, isBcTriplet } from '../js/bc.js';
     import { ecccWarningName, ecccPeriods } from '../js/api.js';
+    import { dangerLevel, inGeometry, milesToGeometry, findZone, htmlToText, usForecastFrom, caForecastFrom } from '../js/avalanche.js';
 
     const today = '2026-01-10';
     const series = (depths, temp = 20) =>
@@ -280,6 +281,55 @@
       }] } })[0];
       eq(p.name, 'Tonight'); eq(p.isDaytime, false); eq(p.temperature, 9); eq(p.wind, 'NW 12 mph');
       eq(p.short, 'Periods of snow'); eq(p.precip, 70);
+    });
+
+    // ---- Avalanche forecasts ----
+    const square = (lon, lat, size = 1) => ({ type: 'Polygon', coordinates: [[[lon, lat], [lon + size, lat], [lon + size, lat + size], [lon, lat + size], [lon, lat]]] });
+    test('danger levels read from numbers, names and Avalanche Canada values', () => {
+      eq(dangerLevel(3), 3); eq(dangerLevel(-1), null); eq(dangerLevel(0), null);
+      eq(dangerLevel('considerable'), 3); eq(dangerLevel('4:high'), 4);
+      eq(dangerLevel('earlyseason'), null); eq(dangerLevel('norating'), null); eq(dangerLevel(null), null);
+    });
+    test('a site inside a zone outline is in it; holes and outside points are not', () => {
+      const zone = { type: 'Polygon', coordinates: [square(-120, 40, 2).coordinates[0], square(-119.5, 40.5, 1).coordinates[0]] };
+      ok(inGeometry(zone, 40.2, -119.8), 'inside'); ok(!inGeometry(zone, 41, -119), 'in the hole'); ok(!inGeometry(zone, 43, -119), 'outside');
+      ok(inGeometry({ type: 'MultiPolygon', coordinates: [square(-100, 40).coordinates, square(-120, 40).coordinates] }, 40.5, -119.5), 'multi');
+    });
+    test('a site just outside a zone gets it as the nearest; far away gets none', () => {
+      const zones = [{ id: 1, geometry: square(-120, 40), properties: { name: 'A' } }];
+      near(milesToGeometry(zones[0].geometry, 40.5, -120.1), 5.3, 0.3, 'edge distance');
+      const nearHit = findZone(zones, 40.5, -120.1);
+      eq(nearHit.feature.id, 1); ok(nearHit.distanceMi > 4 && nearHit.distanceMi < 7, `distance ${nearHit.distanceMi}`);
+      eq(findZone(zones, 40.5, -121), null, 'too far');
+      eq(findZone(zones, 40.5, -119.5).distanceMi, 0, 'inside');
+    });
+    test('forecast HTML becomes plain text (nothing from it can run)', () => {
+      eq(htmlToText('<p>Large <b>and</b> dangerous.</p><p>Avoid<br>wind slabs.<script>x()<\/script><img src=x onerror=alert(1)></p>'),
+        'Large and dangerous. Avoid wind slabs.');
+    });
+    test('US forecast: danger by elevation, problems, bottom line', () => {
+      const f = usForecastFrom(
+        { id: 2458, properties: { name: 'Central Sierra Nevada', center: 'Sierra Avalanche Center', center_id: 'SAC', danger_level: 3, link: 'https://x/' } }, 0,
+        { danger: [{ valid_day: 'current', upper: 3, middle: 3, lower: 2 }, { valid_day: 'tomorrow', upper: 2, middle: 2, lower: 1 }],
+          forecast_avalanche_problems: [{ name: 'Wind Slab', likelihood: 'likely', size: ['1', '2'] }],
+          bottom_line: '<p>Large avalanches remain a concern.</p>', published_time: '2026-11-22T14:43:00+00:00',
+          expires_time: '2099-01-01T12:00:00+00:00', forecast_zone: [{ id: 2458, name: 'Central Sierra Nevada', url: 'https://sac/zone' }] });
+      eq(f.overall, 3); eq(f.today[2].level, 2); eq(f.tomorrow[0].level, 2); eq(f.url, 'https://sac/zone');
+      eq(f.problems[0].detail, 'Likely, size 1–2'); eq(f.summary, 'Large avalanches remain a concern.'); eq(f.expired, false);
+    });
+    test('US forecast without a rating or full forecast falls back to the map entry', () => {
+      const f = usForecastFrom({ id: 1, properties: { name: 'Tetons', center: 'Bridger-Teton Avalanche Center', danger_level: -1, travel_advice: 'Watch for unstable snow.', link: 'https://btac/' } }, 3.2, null);
+      eq(f.overall, null); eq(f.today, null); eq(f.summary, 'Watch for unstable snow.'); eq(f.distanceMi, 3.2); eq(f.url, 'https://btac/');
+    });
+    test('Avalanche Canada: early season, in season, and nothing covering the point', () => {
+      const band = (v) => ({ rating: { value: v, display: v } });
+      const early = caForecastFrom({ url: 'https://avalanche.ca/f/1', report: { title: 'A-'.repeat(50), highlights: '<p>Daily forecasts begin Nov 25.</p>',
+        dangerRatings: [{ ratings: { alp: band('earlyseason'), tln: band('earlyseason'), btl: band('earlyseason') } }] } });
+      eq(early.offSeason, true); eq(early.overall, null); eq(early.zone, 'All BC forecast regions'); eq(early.summary, 'Daily forecasts begin Nov 25.');
+      const live = caForecastFrom({ url: 'https://avalanche.ca/f/2', report: { title: 'Glacier', problems: [{ type: { display: 'Storm slabs' } }],
+        dangerRatings: [{ ratings: { alp: band('considerable'), tln: band('moderate'), btl: band('low') } }, { ratings: { alp: band('high'), tln: band('considerable'), btl: band('moderate') } }] } });
+      eq(live.overall, 3); eq(live.tomorrow[0].level, 4); eq(live.zone, 'Glacier'); eq(live.problems[0].name, 'Storm slabs'); eq(live.offSeason, false);
+      eq(caForecastFrom({ id: '', url: '', report: { title: '', dangerRatings: null } }), null);
     });
 
     let passed = 0;

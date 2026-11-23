@@ -25,7 +25,8 @@ const SETTINGS_KEY = 'ss.settings.v1';
 const listeners = new Set();
 
 // useHourly: score from the latest hourly SNOTEL readings instead of the midnight daily one.
-const defaults = () => ({ selected: [], minBase: DEFAULT_MIN_BASE_IN, useHourly: true });
+// showAvalanche: show the avalanche center's forecast on each site's page.
+const defaults = () => ({ selected: [], minBase: DEFAULT_MIN_BASE_IN, useHourly: true, showAvalanche: true });
 
 let settings = { ...defaults(), ...load(SETTINGS_KEY, {}) };
 

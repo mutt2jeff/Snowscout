@@ -3,6 +3,7 @@
 // site detail (chart, forecast, daily table), settings (minimum rideable base).
 
 import * as api from './api.js';
+import { avalancheForecast, DANGER, US_HOME, CA_HOME } from './avalanche.js';
 import { getSettings, updateSettings, onSettingsChange, toggleSite, isSelected } from './store.js';
 import { MIN_BASE_RANGE, RIDEABLE_FLOOR, FULL_FRESH_IN, fullDepthFor, addDays, shortTime } from './scorer.js';
 
@@ -528,17 +529,23 @@ function renderDetail(triplet) {
     const link = api.sourceLink(c.station);
     app.querySelector('#ext').innerHTML =
       `<a class="icon-btn" href="${esc(link.url)}" target="_blank" rel="noopener" aria-label="${esc(link.label)}">${icon('globe')}</a>`;
-    drawDetail(c, { loading: c.station.lat != null });
-    if (c.station.lat == null) return;
-    try {
-      const fc = await api.forecast(c.station);
-      if (alive) drawDetail(c, { periods: fc });
-    } catch (e) {
-      if (alive) drawDetail(c, { error: e.message });
-    }
+    const hasSpot = c.station.lat != null;
+    let fc = { loading: hasSpot };
+    let avy = !getSettings().showAvalanche ? null : hasSpot ? { loading: true } : { none: true };
+    const redraw = () => { if (alive) drawDetail(c, fc, avy); };
+    redraw();
+    if (!hasSpot) return;
+    // Weather and avalanche forecasts load side by side; each redraws when it arrives.
+    const weather = api.forecast(c.station)
+      .then((periods) => { fc = { periods }; }, (e) => { fc = { error: e.message }; })
+      .then(redraw);
+    const avalanche = !avy ? null : avalancheForecast(c.station, { canadian: api.isCanadian(c.station) })
+      .then((data) => { avy = data ? { data } : { none: true }; }, (e) => { avy = { error: e.message }; })
+      .then(redraw);
+    await Promise.all([weather, avalanche]);
   }
 
-  function drawDetail(c, fc) {
+  function drawDetail(c, fc, avy) {
     const s = c.score;
     const newest = [...c.days].reverse();
     const byDate = new Map(c.days.map((d) => [d.date, d]));
@@ -588,6 +595,10 @@ function renderDetail(triplet) {
       <h2 class="section-title">Snow depth – last ${c.days.length} days</h2>
       <section class="card chart">${depthChart(c.days)}</section>
 
+      ${avy ? `
+        <h2 class="section-title">Avalanche forecast</h2>
+        ${avalancheCard(avy, api.isCanadian(c.station))}` : ''}
+
       <h2 class="section-title">${api.forecastSource(c.station)} forecast</h2>
       ${forecastHtml}
 
@@ -609,12 +620,72 @@ function renderDetail(triplet) {
       <p class="footnote">${api.isCanadian(c.station)
         ? 'Snow data: BC Ministry of Environment, Automated Snow Weather Stations (raw readings, not quality-checked), under the Open Government Licence – British Columbia. Forecast: Environment and Climate Change Canada.'
         : 'Snow data: USDA NRCS SNOTEL (provisional, subject to revision). Forecast: National Weather Service.'}
-        SnowScout doesn't assess avalanche danger – check your local avalanche forecast before riding.</p>`;
+        ${avy?.data ? `Avalanche forecast: ${esc(avy.data.center)}.` : ''}
+        The sled score doesn't include avalanche danger – read the full avalanche forecast before riding.</p>`;
   }
 
   body.addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) load(); });
   load();
   return () => { alive = false; document.title = 'SnowScout'; };
+}
+
+// ---- Avalanche card -----------------------------------------------------------------
+
+const dangerChip = (level, fallback = 'No rating') => {
+  const d = DANGER[level];
+  return d
+    ? `<span class="danger d-${d.key}">${level} · ${d.name}</span>`
+    : `<span class="danger d-none">${esc(fallback)}</span>`;
+};
+
+/** The avalanche center's forecast for the site: loading, error, none, or the forecast. */
+function avalancheCard(avy, canadian) {
+  const home = canadian ? CA_HOME : US_HOME;
+  const homeLink = `<a href="${esc(home.url)}" target="_blank" rel="noopener">${esc(home.label)}</a>`;
+  if (avy.loading) return '<section class="card avy"><div class="spinner" aria-label="Loading avalanche forecast"></div></section>';
+  if (avy.error) {
+    return `<section class="card avy"><p class="small" style="color:var(--error)">Avalanche forecast unavailable: ${esc(avy.error)}.
+      Check ${homeLink} before riding.</p></section>`;
+  }
+  if (avy.none) {
+    return `<section class="card avy"><p class="small">No avalanche center forecasts for this area.
+      Avalanches can still happen wherever there's snow on slopes steeper than about 30°.
+      See ${homeLink} for the nearest forecast.</p></section>`;
+  }
+
+  const f = avy.data;
+  const bandLabel = (b) => b.label && !DANGER[b.level] ? b.label : 'No rating';
+  const rows = (f.today ?? []).map((b, i) => `
+    <tr><th>${esc(b.name)}</th><td>${dangerChip(b.level, bandLabel(b))}</td>
+      ${f.tomorrow ? `<td>${dangerChip(f.tomorrow[i]?.level, bandLabel(f.tomorrow[i] ?? {}))}</td>` : ''}</tr>`).join('');
+  const notes = [];
+  if (f.distanceMi > 0) notes.push(`This site is about ${Math.max(1, Math.round(f.distanceMi))} mi outside the ${f.zone} zone, the closest forecast.`);
+  if (f.offSeason) notes.push(canadian ? 'Early season: daily danger ratings haven\'t started yet.' : 'This center is not issuing daily forecasts right now.');
+  if (f.expired) notes.push(`This forecast expired ${shortTime(f.expiresMs)} – check the center for a newer one.`);
+  const issued = f.issuedMs ? ` · issued ${new Date(f.issuedMs).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : '';
+
+  return `
+    <section class="card avy">
+      <div class="avy-head">
+        ${dangerChip(f.overall, f.offSeason ? (canadian ? 'Early season' : 'Off season') : 'No rating')}
+        <div>
+          <div class="avy-zone">${esc(f.zone)}</div>
+          <div class="small muted">${esc(f.center)}${esc(issued)}</div>
+        </div>
+      </div>
+      ${notes.map((n) => `<p class="small asof warn">${esc(n)}</p>`).join('')}
+      ${rows ? `
+        <table class="avy-bands">
+          <thead><tr><th>${canadian ? 'Terrain' : 'Elevation'}</th><th>Today</th>${f.tomorrow ? '<th>Tomorrow</th>' : ''}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>` : ''}
+      ${f.problems.length ? `
+        <div class="avy-problems"><b>Avalanche problems</b>
+          <ul>${f.problems.map((p) => `<li>${esc(p.name)}${p.detail ? ` <span class="muted">(${esc(p.detail)})</span>` : ''}</li>`).join('')}</ul>
+        </div>` : ''}
+      ${f.summary ? `<p class="small avy-summary">${esc(f.summary)}</p>` : ''}
+      ${f.url ? `<a class="avy-link" href="${esc(f.url)}" target="_blank" rel="noopener">Read the full forecast at ${esc(f.center)}</a>` : ''}
+    </section>`;
 }
 
 function depthChart(days) {
@@ -742,6 +813,19 @@ function renderSettings() {
           </label>
         </section>
 
+        <h2 class="section-title">Avalanche forecasts</h2>
+        <section class="card setting">
+          <label class="switch-row">
+            <span>
+              <b class="switch-title">Show avalanche forecasts</b>
+              <span class="small muted">Each site's page shows today's and tomorrow's avalanche danger from the
+                forecast center that covers it (US centers through avalanche.org, Avalanche Canada in BC). It doesn't
+                change the sled score. Always read the full forecast before riding avalanche terrain.</span>
+            </span>
+            <input type="checkbox" id="avalanche" role="switch" ${s.showAvalanche ? 'checked' : ''}>
+          </label>
+        </section>
+
         <h2 class="section-title">How the sled score works</h2>
         <section class="card setting" id="score-help"></section>
 
@@ -762,9 +846,10 @@ function renderSettings() {
           Environment's Automated Snow Weather Stations (British Columbia, Open Government Licence – British
           Columbia; refreshed about every 30 minutes). Values are provisional and stations occasionally report bad
           readings. Forecasts: National Weather Service (US), Environment and Climate Change Canada (BC).
-          Map: USGS The National Map.
-          The web version can't send fresh-snow alerts; open it to check conditions. SnowScout doesn't assess
-          avalanche danger – check your local avalanche center before riding.</p>
+          Avalanche forecasts: the US forecast centers through avalanche.org (National Avalanche Center), and
+          Avalanche Canada (BC). Map: USGS The National Map.
+          The web version can't send fresh-snow alerts; open it to check conditions. SnowScout shows the avalanche
+          centers' forecasts as published and makes no avalanche assessment of its own.</p>
 
         <h2 class="section-title">Privacy</h2>
         <p class="small muted">SnowScout counts anonymous visits with GoatCounter, so we know how many people use
@@ -798,6 +883,8 @@ function renderSettings() {
   slider.addEventListener('change', () => updateSettings({ minBase: +slider.value }));
   const hourly = app.querySelector('#hourly');
   hourly.addEventListener('change', () => updateSettings({ useHourly: hourly.checked }));
+  const avalanche = app.querySelector('#avalanche');
+  avalanche.addEventListener('change', () => updateSettings({ showAvalanche: avalanche.checked }));
   return null;
 }
 

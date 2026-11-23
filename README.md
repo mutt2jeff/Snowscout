@@ -39,6 +39,10 @@ for US sites; BC sites show "Couldn't load BC snow data".
 ## Differences from the Android app
 
 - No background fresh-snow alerts (a web page can't check while it's closed). Open it to check.
+- Avalanche forecasts on each site's page (Settings → Show avalanche forecasts). Web only
+  for now. US: avalanche.org's zone map, then that zone's full forecast; a site up to 10 mi
+  outside a zone is shown that zone, marked as nearby. BC: Avalanche Canada's point forecast.
+  The sled score never includes avalanche danger.
 - Everything else matches: same sled score (`js/scorer.js` is a line-for-line port of
   `SnowScorer.kt`, with the same tests), map picker, site details, NWS forecast, settings.
 
@@ -72,6 +76,7 @@ css/app.css             styles (light and dark mode)
 js/app.js               screens: dashboard, site picker (map + list), detail, settings
 js/api.js               NRCS / NWS / BC / Environment Canada data, station cache
 js/bc.js                BC snow station files: building (Action) and reading (app)
+js/avalanche.js         avalanche forecasts (avalanche.org for the US, Avalanche Canada for BC)
 js/readings.js          readings saved on the phone for server outages
 js/scorer.js            sled score (keep in step with SnowScorer.kt)
 js/store.js             saved sites and settings (browser storage)
