@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stashfinder Support</title>
+  <meta name="description" content="Help and contact for the Stashfinder backcountry snow app.">
+  <meta name="theme-color" content="#1E4E79">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <style>
+    :root { --bg: #F6F9FC; --surface: #FFFFFF; --text: #14212E; --muted: #5A6B7B;
+            --primary: #1E4E79; --on-primary: #FFFFFF; --border: #D5DEE7; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0E141B; --surface: #17202A; --text: #E6EDF3; --muted: #9AA9B8;
+              --primary: #9CC7F0; --on-primary: #0A2540; --border: #2A3644; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 4px; color: var(--primary); }
+    h2 { font-size: 1.15rem; margin: 32px 0 8px; }
+    .lead { color: var(--muted); margin: 0 0 24px; }
+    .contact { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+               padding: 16px 20px; }
+    .contact p { margin: 0 0 8px; }
+    .contact p:last-child { margin: 0; }
+    .btn { display: inline-block; margin-top: 4px; padding: 10px 20px; border-radius: 999px;
+           background: var(--primary); color: var(--on-primary); font-weight: 600; text-decoration: none; }
+    details { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+              padding: 12px 16px; margin: 8px 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    details p, details ul { margin: 8px 0 0; }
+    ul { padding-left: 1.25em; }
+    li { margin: 4px 0; }
+    a { color: var(--primary); }
+    footer { margin-top: 32px; color: var(--muted); font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Stashfinder Support</h1>
+  <p class="lead">Stashfinder shows snow depth, new snow, weather and avalanche forecasts for mountain
+  snow stations in the US, British Columbia and Alberta, and ranks your saved stations so you can see
+  where the best snow is. Stashfinder was called SnowScout until November 2026.</p>
+
+  <section class="contact" aria-label="Contact">
+    <p><strong>Questions, bug reports or ideas?</strong> Email us and we'll get back to you, usually
+    within a few days.</p>
+    <p id="email-line">Email: <span id="email">itsjustapp (at) gmail (dot) com</span></p>
+    <p><a class="btn" id="email-btn" href="#email-line">Email support</a></p>
+  </section>
+
+  <h2>Common questions</h2>
+
+  <details>
+    <summary>What is the snow score?</summary>
+    <p>A 0–100 score for each station, based on snow depth (55%), new snow in the last 72 hours (30%)
+    and temperature (15%, colder is better). Stations with less than your minimum base are marked
+    "No go" no matter how cold it is or how much fell recently. You can set your minimum base in
+    Settings. The score is about the snow only: it doesn't include avalanche danger, weather hazards
+    or route conditions.</p>
+  </details>
+
+  <details>
+    <summary>Why does a station say "no signal" or "last report"?</summary>
+    <p>Automated stations sometimes can't send their readings, often during heavy snow. Stashfinder
+    keeps showing the last real reading and says how old it is, and checks the weather service for a
+    winter storm in the area. Missing readings never count as "no snow".</p>
+  </details>
+
+  <details>
+    <summary>Why do the numbers look wrong at one station?</summary>
+    <p>Station readings are provisional: the agencies that run them haven't checked them yet, and
+    snow-depth sensors sometimes jump or drift. Compare with nearby stations, and treat one odd
+    reading with caution. Some stations only measure snow water (SWE) and have no snow score.</p>
+  </details>
+
+  <details>
+    <summary>Why is there no avalanche forecast for my station?</summary>
+    <p>Forecasts come from the US avalanche centers (through avalanche.org) and Avalanche Canada.
+    Some stations are outside every forecast area, and some centers don't issue daily ratings early
+    or late in the season. Always check the avalanche center's own site before heading into
+    avalanche terrain.</p>
+  </details>
+
+  <details>
+    <summary>How do fresh-snow alerts work?</summary>
+    <p>In the phone app, turn on alerts in Settings. Stashfinder checks your saved stations in the
+    background every few hours and notifies you when one picks up the amount of new snow you set.
+    The check runs on your phone. The web version can't send alerts.</p>
+  </details>
+
+  <details>
+    <summary>How do I install the web version on an iPhone?</summary>
+    <ul>
+      <li>Open the web app in <strong>Safari</strong>.</li>
+      <li>Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</li>
+      <li>Open Stashfinder from the new icon and choose your stations there.</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>How do I join the Android or iPhone beta?</summary>
+    <p>Email us with your phone type (Android or iPhone) and the email address on your Google Play
+    account or Apple ID, and we'll send you an invitation.</p>
+  </details>
+
+  <details>
+    <summary>Where does the data come from?</summary>
+    <p>Snow data: USDA NRCS SNOTEL, the BC Ministry of Environment's Automated Snow Weather Stations
+    and Alberta Rivers. Forecasts: the National Weather Service and Environment and Climate Change
+    Canada. Avalanche forecasts: avalanche.org and Avalanche Canada. Maps: the US Geological Survey.
+    Stashfinder is independent and isn't affiliated with any of them.</p>
+  </details>
+
+  <footer>
+    <p><a href="./">Open the Stashfinder web app</a> · <a href="privacy.html">Privacy policy</a></p>
+  </footer>
+</main>
+<script>
+  // The address is put together here rather than written out, to keep it from simple scrapers.
+  (function () {
+    var addr = ['itsjustapp', 'gmail.com'].join('@');
+    var href = 'mailto:' + addr + '?subject=' + encodeURIComponent('Stashfinder support');
+    var span = document.getElementById('email');
+    var link = document.createElement('a');
+    link.href = href;
+    link.textContent = addr;
+    span.replaceWith(link);
+    document.getElementById('email-btn').href = href;
+  })();
+</script>
+</body>
+</html>

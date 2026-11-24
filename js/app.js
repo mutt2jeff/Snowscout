@@ -901,6 +901,7 @@ function renderSettings() {
         <p class="small muted">Stashfinder counts anonymous visits with GoatCounter, so we know how many people use
           it and which screens they open. It uses no cookies and doesn't collect your name, location or anything
           that identifies you. Your saved sites stay on your phone.</p>
+        <p class="small"><a href="support.html">Help and support</a> · <a href="privacy.html">Privacy policy</a></p>
       </main>
     </div>`;
 
