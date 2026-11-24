@@ -34,13 +34,22 @@ export function mergeHours(saved = [], fresh = [], keepHours = KEEP_HOURS) {
 let memo = null;
 const all = () => (memo ??= load(KEY, {}));
 
-/** { hours, days, savedAt } for a site, or null. */
+/**
+ * { hours, days, savedAt, fetchedAt } for a site, or null. fetchedAt is when fresh readings
+ * last actually downloaded (savedAt also changes when a failed download keeps old ones).
+ */
 export const savedReadings = (triplet) => all()[triplet] ?? null;
 
-/** Save readings for several sites at once: { triplet: { hours, days } }. */
-export function saveReadings(updates, nowMs = Date.now()) {
+/**
+ * Save readings for several sites at once: { triplet: { hours, days } }. fetched: the
+ * triplets freshly downloaded just now (default: all of them).
+ */
+export function saveReadings(updates, nowMs = Date.now(), fetched = null) {
   const store = all();
-  for (const [t, r] of Object.entries(updates)) store[t] = { ...r, savedAt: nowMs };
+  for (const [t, r] of Object.entries(updates)) {
+    const fetchedAt = !fetched || fetched.has(t) ? nowMs : (store[t]?.fetchedAt ?? 0);
+    store[t] = { ...r, savedAt: nowMs, fetchedAt };
+  }
   for (const [t, r] of Object.entries(store)) {
     if (nowMs - (r.savedAt ?? 0) > FORGET_AFTER_DAYS * 24 * HOUR) delete store[t];
   }

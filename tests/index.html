@@ -77,6 +77,11 @@
       const s = score(series([40, 39, 38, 37]), today);
       eq(s.new24In, 0); eq(s.new72In, 0);
     });
+    test('fresh snow on a settling base still counts (B2, Beartown Nov 2026)', () => {
+      const s = score(series([50, 44, 40, 45], 28), today);
+      near(s.new24In, 5, 0.01, 'new24'); near(s.new72In, 5, 0.01, 'new72');
+      eq(s.score, 79, 'score');
+    });
     test('warm temperatures lower a rideable score', () => {
       const cold = score(series([40, 40, 40, 40], 20), today);
       const warm = score(series([40, 40, 40, 40], 38), today);

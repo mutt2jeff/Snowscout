@@ -43,11 +43,29 @@ export function onSettingsChange(fn) {
   return () => listeners.delete(fn);
 }
 
+/** Keeps alerts reasonable and each download to one request to NRCS (owner's choice). */
+export const MAX_SITES = 25;
+
+/**
+ * Adds or removes a site. Adding stops at MAX_SITES (returns false); people already over the
+ * limit keep their sites, they just can't add more.
+ */
 export function toggleSite(triplet) {
   const set = new Set(settings.selected);
   if (set.has(triplet)) set.delete(triplet);
+  else if (set.size >= MAX_SITES) return false;
   else set.add(triplet);
   updateSettings({ selected: [...set] });
+  return true;
+}
+
+export function removeSite(triplet) {
+  updateSettings({ selected: settings.selected.filter((t) => t !== triplet) });
+}
+
+/** Puts a removed site back (Undo), even at the limit: it was saved a moment ago. */
+export function restoreSite(triplet) {
+  if (!settings.selected.includes(triplet)) updateSettings({ selected: [...settings.selected, triplet] });
 }
 
 export const isSelected = (triplet) => settings.selected.includes(triplet);

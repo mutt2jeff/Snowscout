@@ -10,7 +10,7 @@
 //
 // Bump VERSION whenever you publish changed files, so old saved copies get cleaned up.
 
-const VERSION = 'snowscout-web-v9.4'; // v9.4 support page, v9.3 renamed to Stashfinder (cache name kept), v9.2 phone app beta invitation, v9.1 wording for all backcountry users (snow score), v9 Alberta stations, v8 avalanche forecasts (v8.1 BC region edges, v8.2 wording), v2 hourly, v3 noindex, v4 network-first, v5 saved readings + retries, v6 silent stations, v7 BC stations, v7.3 visit counts, v7.4 readable count names
+const VERSION = 'snowscout-web-v9.5'; // v9.5 25-site limit, fewer downloads, remove from site page, fresh-snow score fix, v9.4 support page, v9.3 renamed to Stashfinder (cache name kept), v9.2 phone app beta invitation, v9.1 wording for all backcountry users (snow score), v9 Alberta stations, v8 avalanche forecasts (v8.1 BC region edges, v8.2 wording), v2 hourly, v3 noindex, v4 network-first, v5 saved readings + retries, v6 silent stations, v7 BC stations, v7.3 visit counts, v7.4 readable count names
 const NETWORK_TIMEOUT_MS = 4000;
 const SHELL = [
   './',

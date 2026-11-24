@@ -4,7 +4,7 @@
 
 import * as api from './api.js';
 import { avalancheForecast, DANGER, US_HOME, CA_HOME } from './avalanche.js';
-import { getSettings, updateSettings, onSettingsChange, toggleSite, isSelected } from './store.js';
+import { getSettings, updateSettings, onSettingsChange, toggleSite, isSelected, removeSite, restoreSite, MAX_SITES } from './store.js';
 import { MIN_BASE_RANGE, RIDEABLE_FLOOR, FULL_FRESH_IN, fullDepthFor, addDays, shortTime } from './scorer.js';
 
 const app = document.getElementById('app');
@@ -150,7 +150,8 @@ const SORTS = [
   { key: 'fresh', label: 'Most new snow', by: (c) => c.score.new72In ?? c.score.new24In ?? -1 },
 ];
 
-const dash = { sites: [], loading: false, error: null, updatedAt: null, sort: 'score', key: null };
+// undo: { triplet, name } of a site just removed on its detail page, for the Undo bar.
+const dash = { sites: [], loading: false, error: null, updatedAt: null, sort: 'score', key: null, undo: null };
 
 function renderDashboard() {
   let alive = true;
@@ -214,7 +215,10 @@ function renderDashboard() {
     try {
       const sites = await api.conditions(st.selected, st.minBase, st.useHourly);
       if (!alive) return;
-      dash.sites = sites; dash.updatedAt = new Date();
+      // "Updated" is when the readings were downloaded, which may be a few minutes ago when
+      // recent readings were reused.
+      const times = sites.map((c) => c.fetchedAt).filter((t) => t > 0);
+      dash.sites = sites; dash.updatedAt = times.length ? new Date(Math.min(...times)) : new Date();
     } catch (e) {
       if (!alive) return;
       dash.error = e.message;
@@ -234,10 +238,27 @@ function renderDashboard() {
   });
   app.querySelector('#refresh').addEventListener('click', refresh);
 
+  // "Removed Beartown · Undo", for a few seconds after removing a site on its page.
+  let undoTimer = null;
+  if (dash.undo) {
+    const { triplet, name } = dash.undo;
+    dash.undo = null;
+    const bar = document.createElement('div');
+    bar.className = 'snackbar';
+    bar.setAttribute('role', 'status');
+    bar.innerHTML = `<span>Removed ${esc(name)}</span><button type="button">Undo</button>`;
+    bar.querySelector('button').addEventListener('click', () => {
+      restoreSite(triplet); bar.remove(); clearTimeout(undoTimer);
+      if (alive) refresh(); // re-scores from saved readings; nothing new to download
+    });
+    app.querySelector('.screen').appendChild(bar);
+    undoTimer = setTimeout(() => bar.remove(), 6000);
+  }
+
   if (dash.key !== settingsKey(getSettings()) || !dash.updatedAt) refresh();
   else draw();
 
-  return () => { alive = false; };
+  return () => { alive = false; clearTimeout(undoTimer); };
 }
 
 function siteCard(c, rank) {
@@ -290,6 +311,8 @@ function renderSites() {
           <button type="button" role="tab" data-mode="map">${icon('map')}Map</button>
         </div>
         <div class="chips" id="chips" role="group" aria-label="Filter"></div>
+        <p class="small limit-msg" id="limit" role="status" hidden>You can save up to ${MAX_SITES} sites. Remove one to add another.</p>
+        <div id="missing"></div>
       </div>
       <div class="sites-body">
         <div class="map-wrap" id="map-wrap" hidden>
@@ -312,6 +335,10 @@ function renderSites() {
   const listEl = app.querySelector('#list');
   const statusEl = app.querySelector('#status');
   const previewEl = app.querySelector('#preview');
+  const limitEl = app.querySelector('#limit');
+  const missingEl = app.querySelector('#missing');
+  // Adds or removes a site; shows the limit message when a 26th site is refused.
+  const toggle = (t) => { const ok = toggleSite(t); limitEl.hidden = ok; return ok; };
   q.value = picker.query;
   clearBtn.hidden = !picker.query;
 
@@ -331,7 +358,7 @@ function renderSites() {
     const states = [...new Set(stations.map((s) => s.state))].sort();
     const n = getSettings().selected.length;
     chipsEl.innerHTML =
-      `<button type="button" class="chip" data-mine aria-pressed="${picker.mineOnly}">My sites (${n})</button>` +
+      `<button type="button" class="chip" data-mine aria-pressed="${picker.mineOnly}">My sites (${n} of ${MAX_SITES})</button>` +
       `<button type="button" class="chip" data-state="" aria-pressed="${picker.state == null}">All</button>` +
       states.map((s) => `<button type="button" class="chip" data-state="${esc(s)}" aria-pressed="${picker.state === s}">${esc(s)}</button>`).join('');
   }
@@ -358,7 +385,7 @@ function renderSites() {
   }
   listEl.addEventListener('change', (e) => {
     const t = e.target.dataset?.t;
-    if (t) toggleSite(t);
+    if (t && !toggle(t)) e.target.checked = false;
   });
 
   // Map ----------------------------------------------------------------------------
@@ -464,7 +491,7 @@ function renderSites() {
     previewEl.hidden = false;
     previewEl.onclick = (e) => {
       if (e.target.closest('[data-close]')) closePreview();
-      else if (e.target.closest('[data-toggle]')) { toggleSite(st.triplet); drawPreview(st, c, status); }
+      else if (e.target.closest('[data-toggle]')) { toggle(st.triplet); drawPreview(st, c, status); }
     };
   }
 
@@ -516,6 +543,8 @@ function renderSites() {
       stations = await api.allStations();
       if (!alive) return;
       statusEl.innerHTML = '';
+      const missing = api.missingStationLists;
+      missingEl.innerHTML = missing.length ? errorBanner(`${missing.join(' and ')} stations couldn't load`) : '';
       drawChips();
       drawMode();
     } catch (e) {
@@ -524,6 +553,7 @@ function renderSites() {
     }
   }
   statusEl.addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) load(); });
+  missingEl.addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) load(); });
   load();
 
   return () => {
@@ -662,9 +692,31 @@ function renderDetail(triplet) {
         ? 'Snow data: BC Ministry of Environment, Automated Snow Weather Stations (raw readings, not quality-checked), under the Open Government Licence – British Columbia. Forecast: Environment and Climate Change Canada.'
         : 'Snow data: USDA NRCS SNOTEL (provisional, subject to revision). Forecast: National Weather Service.'}
         ${avy?.data ? `Avalanche forecast: ${esc(avy.data.center)}.` : ''}
-        The snow score doesn't include avalanche danger – read the full avalanche forecast before heading out.</p>`;
+        The snow score doesn't include avalanche danger – read the full avalanche forecast before heading out.</p>
+
+      <div class="saved-site" id="saved-site">${savedSiteButton()}</div>`;
   }
 
+  // Bottom of the page: remove the site from (or add it to) my sites.
+  function savedSiteButton(limitHit = false) {
+    if (isSelected(triplet)) {
+      return `<button type="button" class="btn outline block" data-remove>${icon('close')}Remove from my sites</button>`;
+    }
+    return `<button type="button" class="btn block" data-add>${icon('add')}Add to my sites</button>` +
+      (limitHit ? `<p class="small limit-msg">You can save up to ${MAX_SITES} sites. Remove one to add another.</p>` : '');
+  }
+
+  body.addEventListener('click', (e) => {
+    if (e.target.closest('[data-remove]')) {
+      removeSite(triplet);
+      // Back to the dashboard, which offers Undo for a few seconds.
+      dash.undo = { triplet, name: app.querySelector('#title').textContent || 'site' };
+      location.hash = '#/';
+    } else if (e.target.closest('[data-add]')) {
+      const ok = toggleSite(triplet);
+      app.querySelector('#saved-site').innerHTML = savedSiteButton(!ok);
+    }
+  });
   body.addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) load(); });
   load();
   return () => { alive = false; document.title = 'Stashfinder'; };

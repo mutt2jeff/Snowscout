@@ -84,6 +84,17 @@ export function ratingFor(score) {
   return Rating.NOT_RIDEABLE;
 }
 
+/**
+ * New snow over 3 days is never shown as less than over the last day. Snow settles, so the
+ * depth today can be no higher than 3 days ago even after a fresh 5" – but that 5" is still
+ * new snow, and it should count in the score.
+ */
+export function atLeast24(new72, new24) {
+  if (new72 == null) return new24 ?? null;
+  if (new24 == null) return new72;
+  return Math.max(new72, new24);
+}
+
 /** The scoring rules. Inputs in inches / °F; any may be null except depth. */
 export function rate({ depth, new24, new72, temp }, minBaseIn = DEFAULT_MIN_BASE_IN) {
   const minBase = Math.max(1, minBaseIn);
@@ -148,7 +159,7 @@ export function score(days, today = todayIso(), minBaseIn = DEFAULT_MIN_BASE_IN)
     return prior == null ? null : Math.max(0, depth - prior);
   };
   const new24 = newSince(1);
-  const new72 = newSince(3);
+  const new72 = atLeast24(newSince(3), new24);
   const swe = latest.swe ?? latestSwe;
   const temp = latest.tobs ?? latest.tmax ?? null;
 
@@ -296,9 +307,10 @@ export function scoreHourly(hours, days, nowMs = Date.now(), minBaseIn = DEFAULT
   const inputs = {
     depth: cur.depth,
     new24: cur.new24 ?? daily.new24In,
-    new72: cur.new72 ?? daily.new72In,
+    new72: null,
     temp: cur.temp ?? daily.tempF,
   };
+  inputs.new72 = atLeast24(cur.new72 ?? daily.new72In, inputs.new24);
   const r = rate(inputs, minBaseIn);
   // A silent station leads its notes: it matters more than anything else on the card.
   const sig = silence(cur, nowMs);

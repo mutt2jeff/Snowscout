@@ -49,6 +49,8 @@ const PROVINCES = [
 const provinceOf = (triplet) => PROVINCES.find((p) => p.owns(String(triplet ?? ''))) ?? null;
 const HISTORY_DAYS = 14;
 const BATCH = 40;
+/** Readings newer than this are re-scored instead of downloaded again. */
+const REUSE_READINGS_MS = 15 * 60 * 1000;
 
 // The NRCS server often answers "503 Service Unavailable" when busy, but a retry a moment
 // later usually works (measured: ~half of requests 503 at busy times, each failing in
@@ -134,11 +136,18 @@ const provinceStations = (p) => cachedList(p.cacheKey, PROVINCE_STATION_CACHE_MS
  * All active SNOTEL stations (~900, cached a week) plus BC's (~150) and Alberta's (~40) snow
  * stations (cached a day). If one network can't be loaded the others still show.
  */
+/** Regions whose station list couldn't be loaded last time ("US", "BC", "Alberta"). */
+export let missingStationLists = [];
+
 export function allStations() {
   if (!stationsPromise) {
     stationsPromise = (async () => {
       const lists = await Promise.allSettled([snotelStations(), ...PROVINCES.map(provinceStations)]);
+      const labels = ['US', ...PROVINCES.map((p) => p.label)];
+      missingStationLists = labels.filter((_, i) => lists[i].status === 'rejected');
       if (lists.every((l) => l.status === 'rejected')) throw lists[0].reason;
+      // A partial list isn't kept: the next visit to Sites tries the missing region again.
+      if (missingStationLists.length) setTimeout(() => { stationsPromise = null; }, 0);
       return lists.flatMap((l) => l.value ?? [])
         .sort((a, b) => a.state.localeCompare(b.state) || a.name.localeCompare(b.name));
     })();
@@ -260,7 +269,18 @@ export async function conditions(triplets, minBase, useHourly = false) {
   const today = todayIso();
   const now = Date.now();
   const saved = new Map(triplets.map((t) => [t, savedReadings(t)]));
-  const us = triplets.filter((t) => !provinceOf(t));
+  // Readings downloaded in the last 15 minutes are re-scored, not downloaded again: NRCS only
+  // updates hourly, and this keeps settings changes, new sites and repeat refreshes from
+  // sending the whole list again.
+  const recentEnough = (t) => {
+    const p = saved.get(t);
+    if (!p || now - (p.fetchedAt ?? 0) >= REUSE_READINGS_MS) return false;
+    return !useHourly || !!provinceOf(t) || !!p.hours?.length || !p.days?.length;
+  };
+  const reused = new Set(triplets.filter(recentEnough));
+  const toFetch = triplets.filter((t) => !reused.has(t));
+  const fetched = new Set();
+  const us = toFetch.filter((t) => !provinceOf(t));
   const NONE = { data: new Map(), failed: new Set(), error: null };
 
   // Do we already have the older hours (back past 72h) and something from the last day?
@@ -280,7 +300,7 @@ export async function conditions(triplets, minBase, useHourly = false) {
         addDays(today, g.every(hasRecentHours) ? -1 : -3), addDays(today, 1)))
       : null,
     // BC and Alberta: one small file per province with every station's latest readings.
-    ...PROVINCES.map((p) => (triplets.some(p.owns)
+    ...PROVINCES.map((p) => (toFetch.some(p.owns)
       ? getJson(p.readingsUrl, { cache: 'no-cache' }).then((file) => ({ file }), (error) => ({ error }))
       : null)),
   ]);
@@ -298,7 +318,11 @@ export async function conditions(triplets, minBase, useHourly = false) {
 
     // Fresh readings, or null where the download failed (then the saved ones are used).
     let freshDays, freshHours;
-    if (province) {
+    if (reused.has(t)) {
+      // Downloaded a few minutes ago: use what's on the phone as if it were fresh.
+      freshDays = prev.days ?? [];
+      freshHours = useHourly ? [] : null;
+    } else if (province) {
       freshDays = feed.file ? bcDays(feed.file, station.id) : null;
       freshHours = feed.file ? bcHours(feed.file, station.id) : null;
     } else {
@@ -314,6 +338,7 @@ export async function conditions(triplets, minBase, useHourly = false) {
     if (useHourly && freshHours) hours = mergeHours(hours, freshHours);
 
     updates[t] = { days, hours };
+    if (!reused.has(t) && !dailyFailed && !hourlyFailed) fetched.add(t);
     if (days.length || hours.length) anyData = true;
 
     let s = useHourly ? scoreHourly(hours, days, now, minBase, tz) : score(days, today, minBase);
@@ -334,12 +359,14 @@ export async function conditions(triplets, minBase, useHourly = false) {
       // Which parts of the shown numbers came from readings saved earlier on this phone.
       dailyFromSave: dailyFailed && days.length > 0,
       hourlyFromSave: hourlyFailed && s.source === 'hourly',
+      // When these readings were last downloaded (0 = never).
+      fetchedAt: fetched.has(t) ? now : (prev?.fetchedAt ?? 0),
     };
     conditionsCache.set(t, c);
     return c;
   });
 
-  saveReadings(updates, now);
+  saveReadings(updates, now, fetched);
   // Nothing downloaded and nothing saved to fall back on: report the error.
   const firstError = daily.error ?? hourly?.error ?? provinceFiles.find((f) => f?.error)?.error;
   if (!anyData && firstError) throw firstError;
