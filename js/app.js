@@ -1,6 +1,6 @@
 // SnowScout web app: screens and navigation.
 // Mirrors the Android app: dashboard (ranked sites), site picker (map + list),
-// site detail (chart, forecast, daily table), settings (minimum rideable base).
+// site detail (chart, forecast, daily table), settings (minimum base).
 
 import * as api from './api.js';
 import { avalancheForecast, DANGER, US_HOME, CA_HOME } from './avalanche.js';
@@ -54,7 +54,7 @@ function readingTime(s, c = {}) {
 }
 
 const badge = (s, large = false) =>
-  `<div class="badge ${s.rating.key}${large ? ' lg' : ''}" role="img" aria-label="Sled score ${s.score}, ${s.rating.label}">` +
+  `<div class="badge ${s.rating.key}${large ? ' lg' : ''}" role="img" aria-label="Snow score ${s.score}, ${s.rating.label}">` +
   `<b>${s.rating.key === 'nodata' ? '–' : s.score}</b><span>${s.rating.label}</span></div>`;
 
 const metric = (label, value, hot = false) =>
@@ -147,8 +147,8 @@ function renderDashboard() {
         <div class="empty">
           ${icon('snow', 72)}
           <h2>Where's the best snow?</h2>
-          <p>Pick the SNOTEL, BC or Alberta snow stations near the areas you ride. SnowScout pulls their latest snow depth,
-             new snow, and temperature and ranks them for sledding.</p>
+          <p>Pick the SNOTEL, BC or Alberta snow stations near the places you go. SnowScout pulls their latest snow depth,
+             new snow, and temperature and ranks them so you can see where the best snow is.</p>
           <a class="btn" href="#/sites">${icon('add')}Choose sites</a>
         </div>`;
       return;
@@ -623,7 +623,7 @@ function renderDetail(triplet) {
         ? 'Snow data: BC Ministry of Environment, Automated Snow Weather Stations (raw readings, not quality-checked), under the Open Government Licence – British Columbia. Forecast: Environment and Climate Change Canada.'
         : 'Snow data: USDA NRCS SNOTEL (provisional, subject to revision). Forecast: National Weather Service.'}
         ${avy?.data ? `Avalanche forecast: ${esc(avy.data.center)}.` : ''}
-        The sled score doesn't include avalanche danger – read the full avalanche forecast before riding.</p>`;
+        The snow score doesn't include avalanche danger – read the full avalanche forecast before heading out.</p>`;
   }
 
   body.addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) load(); });
@@ -647,7 +647,7 @@ function avalancheCard(avy, canadian) {
   if (avy.loading) return '<section class="card avy"><div class="spinner" aria-label="Loading avalanche forecast"></div></section>';
   if (avy.error) {
     return `<section class="card avy"><p class="small" style="color:var(--error)">Avalanche forecast unavailable: ${esc(avy.error)}.
-      Check ${homeLink} before riding.</p></section>`;
+      Check ${homeLink} before heading out.</p></section>`;
   }
   if (avy.none) {
     return `<section class="card avy"><p class="small">No avalanche center forecasts for this area.
@@ -793,12 +793,12 @@ function renderSettings() {
     <div class="screen">
       <header class="topbar has-back">${backButton()}<h1>Settings</h1></header>
       <main class="content">
-        <h2 class="section-title">Rideable base</h2>
+        <h2 class="section-title">Minimum base</h2>
         <section class="card setting">
-          <h3 id="min-label">Minimum base to ride: ${s.minBase}"</h3>
+          <h3 id="min-label">Minimum base: ${s.minBase}"</h3>
           <p class="small muted">Sites with less snow on the ground are marked "No go", no matter how cold it is or how
-            much fell recently. Rough guide: about 10" for flat Midwest trails, 18" for mountain trail riding,
-            48" before heading into the backcountry.</p>
+            much fell recently. Rough guide: about 10" for flat trails and snowshoeing, 18" for mountain trails and
+            mellow touring, 48" for steep or rocky backcountry terrain.</p>
           <input type="range" id="min-base" min="${lo}" max="${hi}" step="1" value="${s.minBase}" aria-labelledby="min-label">
         </section>
 
@@ -822,13 +822,13 @@ function renderSettings() {
               <b class="switch-title">Show avalanche forecasts</b>
               <span class="small muted">Each site's page shows today's and tomorrow's avalanche danger from the
                 forecast center that covers it (US centers through avalanche.org, Avalanche Canada in BC and Alberta). It doesn't
-                change the sled score. Always read the full forecast before riding avalanche terrain.</span>
+                change the snow score. Always read the full forecast before entering avalanche terrain.</span>
             </span>
             <input type="checkbox" id="avalanche" role="switch" ${s.showAvalanche ? 'checked' : ''}>
           </label>
         </section>
 
-        <h2 class="section-title">How the sled score works</h2>
+        <h2 class="section-title">How the snow score works</h2>
         <section class="card setting" id="score-help"></section>
 
         <h2 class="section-title">Install on your iPhone</h2>
@@ -869,7 +869,7 @@ function renderSettings() {
   function drawHelp(minBase) {
     help.innerHTML = `
       <p class="small muted">Base depth comes first. Below your minimum base (${minBase}") a site scores 0–19 on depth
-        alone and is marked No go. Rideable sites start at ${RIDEABLE_FLOOR} and climb to 100:</p>
+        alone and is marked No go. Sites at or above it start at ${RIDEABLE_FLOOR} and climb to 100:</p>
       <div class="score-line"><b>Base depth</b><span>55%</span></div>
       <p class="small muted">from your minimum up to ${fullDepthFor(minBase)}"+</p>
       <div class="score-line"><b>New snow (72h)</b><span>30%</span></div>
@@ -881,7 +881,7 @@ function renderSettings() {
   drawHelp(s.minBase);
 
   slider.addEventListener('input', () => {
-    label.textContent = `Minimum base to ride: ${slider.value}"`;
+    label.textContent = `Minimum base: ${slider.value}"`;
     drawHelp(+slider.value);
   });
   slider.addEventListener('change', () => updateSettings({ minBase: +slider.value }));

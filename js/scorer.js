@@ -1,4 +1,4 @@
-// Sled score: a port of the Android app's SnowScorer.kt, plus (web only, for now) scoring
+// Snow score (called the sled score before Nov 2026): a port of the Android app's SnowScorer.kt, plus (web only, for now) scoring
 // from the latest HOURLY SNOTEL readings. Keep the rules in step with Android.
 //
 // Base depth is a gate:
@@ -93,7 +93,7 @@ export function rate({ depth, new24, new72, temp }, minBaseIn = DEFAULT_MIN_BASE
   if (depth < minBase) {
     value = Math.round(clamp(depth / minBase, 0, 1) * (RIDEABLE_FLOOR - 1));
     const short = Math.max(1, Math.round(minBase - depth));
-    notes.push(`Not rideable – needs about ${short}" more base`);
+    notes.push(`Too thin – needs about ${short}" more base`);
     if ((new72 ?? 0) >= 6) notes.push(`Building – ${Math.round(new72)}" new in 3 days`);
   } else {
     const fullDepth = fullDepthFor(minBase);
@@ -107,7 +107,7 @@ export function rate({ depth, new24, new72, temp }, minBaseIn = DEFAULT_MIN_BASE
     const blended = DEPTH_WEIGHT * depthFactor + FRESH_WEIGHT * freshFactor + TEMP_WEIGHT * tempFactor;
     value = Math.round(RIDEABLE_FLOOR + (100 - RIDEABLE_FLOOR) * blended);
 
-    if (depth < minBase + 6) notes.push('Thin base – best to stay on trails');
+    if (depth < minBase + 6) notes.push('Thin base – watch for rocks and stumps');
     if ((new24 ?? 0) >= 6) notes.push('Fresh powder in the last 24 hours');
     else if ((new72 ?? 0) >= 8) notes.push('Good new snow over the last 3 days');
     if (temp != null && temp > 32) notes.push('Above freezing – heavy, wet snow');

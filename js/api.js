@@ -321,7 +321,7 @@ export async function conditions(triplets, minBase, useHourly = false) {
     if (couldntLoad) s = { ...s, notes: [province ? `Couldn't load ${province.label} snow data – try refreshing` : "Couldn't reach NRCS – try refreshing"] };
 
     if (station.sweOnly && s.depthIn == null) {
-      s = { ...s, notes: ['No snow-depth sensor here – this station only measures snow water (SWE), so it has no sled score'] };
+      s = { ...s, notes: ['No snow-depth sensor here – this station only measures snow water (SWE), so it has no snow score'] };
     }
     // The province feed itself is behind (our updater stopped): don't blame the station.
     if (province && feedStale(feed) && s.silent) {

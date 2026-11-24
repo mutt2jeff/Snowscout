@@ -1,7 +1,7 @@
 {
   "name": "SnowScout",
   "short_name": "SnowScout",
-  "description": "Ranks SNOTEL sites so snowmobilers can see where the best riding snow is.",
+  "description": "Ranks mountain snow stations so skiers, snowboarders, snowshoers and snowmobilers can see where the best backcountry snow is.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
