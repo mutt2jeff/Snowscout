@@ -11,7 +11,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { BC_SOURCES, buildBcData } from '../js/bc.js';
 
 const OUT_DIR = new URL('../data/', import.meta.url);
-const UA = 'SnowScout/1.0 (snowmobile snow-conditions app; GitHub Pages)';
+const UA = 'Stashfinder/1.0 (backcountry snow-conditions app; GitHub Pages)';
 
 // The live site, e.g. https://owner.github.io/Repo/ (GitHub sets GITHUB_REPOSITORY).
 const repo = process.env.GITHUB_REPOSITORY;

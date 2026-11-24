@@ -1,6 +1,6 @@
 {
-  "name": "SnowScout",
-  "short_name": "SnowScout",
+  "name": "Stashfinder",
+  "short_name": "Stashfinder",
   "description": "Ranks mountain snow stations so skiers, snowboarders, snowshoers and snowmobilers can see where the best backcountry snow is.",
   "start_url": "./",
   "scope": "./",

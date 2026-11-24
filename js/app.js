@@ -1,4 +1,4 @@
-// SnowScout web app: screens and navigation.
+// Stashfinder web app: screens and navigation.
 // Mirrors the Android app: dashboard (ranked sites), site picker (map + list),
 // site detail (chart, forecast, daily table), settings (minimum base).
 
@@ -100,8 +100,8 @@ const BETA_EMAIL = ['itsjustapp', 'gmail.com'].join('@');
 const BETA_DISMISS_KEY = 'ss.betaInviteDismissed.v2';
 
 function betaMailto() {
-  const subject = 'SnowScout beta tester';
-  const body = "Hi! I'd like to test the SnowScout phone app.\n\n" +
+  const subject = 'Stashfinder beta tester';
+  const body = "Hi! I'd like to test the Stashfinder phone app.\n\n" +
     'My phone (Android or iPhone): \n' +
     'My Google Play or Apple ID email: \n';
   return `mailto:${BETA_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -114,8 +114,8 @@ function betaDismissed() {
 /** The beta invitation card. [closable]: show the × (dashboard); settings keeps it for good. */
 const betaInvite = (closable) => `
   <section class="invite" aria-label="Phone app beta">
-    <b>SnowScout phone apps: beta testers wanted</b>
-    <p>SnowScout is starting closed betas for Android (Google Play) and iPhone (TestFlight). To join,
+    <b>Stashfinder phone apps: beta testers wanted</b>
+    <p>Stashfinder is starting closed betas for Android (Google Play) and iPhone (TestFlight). To join,
       email <a href="${betaMailto()}">${BETA_EMAIL}</a> with your phone type and the email address on
       your Google Play account or Apple ID. You'll get an invitation when your phone's beta is ready.</p>
     <a class="btn" href="${betaMailto()}">Join the beta</a>
@@ -157,7 +157,7 @@ function renderDashboard() {
   app.innerHTML = `
     <div class="screen">
       <header class="topbar">
-        <div class="title-block"><h1>SnowScout</h1><div class="sub" id="updated"></div></div>
+        <div class="title-block"><h1>Stashfinder</h1><div class="sub" id="updated"></div></div>
         <button class="icon-btn" id="refresh" type="button" aria-label="Refresh">${icon('refresh')}</button>
         <a class="icon-btn" href="#/settings" aria-label="Settings">${icon('settings')}</a>
       </header>
@@ -180,7 +180,7 @@ function renderDashboard() {
         <div class="empty">
           ${icon('snow', 72)}
           <h2>Where's the best snow?</h2>
-          <p>Pick the SNOTEL, BC or Alberta snow stations near the places you go. SnowScout pulls their latest snow depth,
+          <p>Pick the SNOTEL, BC or Alberta snow stations near the places you go. Stashfinder pulls their latest snow depth,
              new snow, and temperature and ranks them so you can see where the best snow is.</p>
           <a class="btn" href="#/sites">${icon('add')}Choose sites</a>
         </div>
@@ -564,7 +564,7 @@ function renderDetail(triplet) {
     countOnce(c?.station ?? api.stationFromTriplet(triplet));
     if (!c) { body.innerHTML = errorBanner('No data for this site'); return; }
     app.querySelector('#title').textContent = c.station.name;
-    document.title = `${c.station.name} · SnowScout`;
+    document.title = `${c.station.name} · Stashfinder`;
     const link = api.sourceLink(c.station);
     app.querySelector('#ext').innerHTML =
       `<a class="icon-btn" href="${esc(link.url)}" target="_blank" rel="noopener" aria-label="${esc(link.label)}">${icon('globe')}</a>`;
@@ -667,7 +667,7 @@ function renderDetail(triplet) {
 
   body.addEventListener('click', (e) => { if (e.target.closest('[data-retry]')) load(); });
   load();
-  return () => { alive = false; document.title = 'SnowScout'; };
+  return () => { alive = false; document.title = 'Stashfinder'; };
 }
 
 // ---- Avalanche card -----------------------------------------------------------------
@@ -876,10 +876,10 @@ function renderSettings() {
         <h2 class="section-title">Install on your iPhone</h2>
         <section class="card setting">
           <ol class="steps">
-            <li>Open SnowScout in <b>Safari</b>.</li>
+            <li>Open Stashfinder in <b>Safari</b>.</li>
             <li>Tap the <b>Share</b> button (the square with an arrow pointing up).</li>
             <li>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.</li>
-            <li>Open SnowScout from its new home-screen icon and choose your sites there.</li>
+            <li>Open Stashfinder from its new home-screen icon and choose your sites there.</li>
           </ol>
           <p class="small muted">The home-screen app keeps its own saved sites, separate from Safari.
             Android phones: use the menu in Chrome and choose <b>Add to Home screen</b> or <b>Install app</b>.</p>
@@ -894,11 +894,11 @@ function renderSettings() {
           readings. Forecasts: National Weather Service (US), Environment and Climate Change Canada (Canada).
           Avalanche forecasts: the US forecast centers through avalanche.org (National Avalanche Center), and
           Avalanche Canada (BC and Alberta). Map: USGS The National Map.
-          The web version can't send fresh-snow alerts; open it to check conditions. SnowScout shows the avalanche
+          The web version can't send fresh-snow alerts; open it to check conditions. Stashfinder shows the avalanche
           centers' forecasts as published and makes no avalanche assessment of its own.</p>
 
         <h2 class="section-title">Privacy</h2>
-        <p class="small muted">SnowScout counts anonymous visits with GoatCounter, so we know how many people use
+        <p class="small muted">Stashfinder counts anonymous visits with GoatCounter, so we know how many people use
           it and which screens they open. It uses no cookies and doesn't collect your name, location or anything
           that identifies you. Your saved sites stay on your phone.</p>
       </main>

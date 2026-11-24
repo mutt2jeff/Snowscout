@@ -13,7 +13,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { AB_SOURCES, buildAbData, snowStations } from '../js/ab.js';
 
 const OUT_DIR = new URL('../data/', import.meta.url);
-const UA = 'SnowScout/1.0 (snowmobile snow-conditions app; GitHub Pages)';
+const UA = 'Stashfinder/1.0 (backcountry snow-conditions app; GitHub Pages)';
 const PARALLEL = 4; // be polite: a few downloads at a time
 
 const repo = process.env.GITHUB_REPOSITORY;
