@@ -89,6 +89,39 @@ function countStation(st) {
   countView(`/station/${st.state}/${st.name}`, `${st.name}, ${st.state} (${network} ${st.id})`);
 }
 
+// ---- Phone app beta invitation ------------------------------------------------------
+// The phone apps are going into closed betas (Nov 2026): Android through Google Play testing,
+// iPhone through TestFlight. Testers are added by the email on their Google Play account or
+// Apple ID, so the invitation asks people to email the developer address with their phone
+// type and that email. The address is put together here rather than written out, to keep it
+// away from simple scrapers.
+
+const BETA_EMAIL = ['itsjustapp', 'gmail.com'].join('@');
+const BETA_DISMISS_KEY = 'ss.betaInviteDismissed.v2';
+
+function betaMailto() {
+  const subject = 'SnowScout beta tester';
+  const body = "Hi! I'd like to test the SnowScout phone app.\n\n" +
+    'My phone (Android or iPhone): \n' +
+    'My Google Play or Apple ID email: \n';
+  return `mailto:${BETA_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function betaDismissed() {
+  try { return localStorage.getItem(BETA_DISMISS_KEY) === '1'; } catch { return false; }
+}
+
+/** The beta invitation card. [closable]: show the × (dashboard); settings keeps it for good. */
+const betaInvite = (closable) => `
+  <section class="invite" aria-label="Phone app beta">
+    <b>SnowScout phone apps: beta testers wanted</b>
+    <p>SnowScout is starting closed betas for Android (Google Play) and iPhone (TestFlight). To join,
+      email <a href="${betaMailto()}">${BETA_EMAIL}</a> with your phone type and the email address on
+      your Google Play account or Apple ID. You'll get an invitation when your phone's beta is ready.</p>
+    <a class="btn" href="${betaMailto()}">Join the beta</a>
+    ${closable ? `<button type="button" class="x" data-beta-close aria-label="Hide this message">${icon('close')}</button>` : ''}
+  </section>`;
+
 // ---- Router -------------------------------------------------------------------------
 
 let cleanup = null;
@@ -150,7 +183,8 @@ function renderDashboard() {
           <p>Pick the SNOTEL, BC or Alberta snow stations near the places you go. SnowScout pulls their latest snow depth,
              new snow, and temperature and ranks them so you can see where the best snow is.</p>
           <a class="btn" href="#/sites">${icon('add')}Choose sites</a>
-        </div>`;
+        </div>
+        ${betaDismissed() ? '' : betaInvite(true)}`;
       return;
     }
 
@@ -160,6 +194,7 @@ function renderDashboard() {
     body.innerHTML = `
       ${dash.loading && dash.sites.length ? '<div class="progress" aria-label="Updating"></div>' : ''}
       ${dash.error ? errorBanner(dash.error) : ''}
+      ${betaDismissed() ? '' : betaInvite(true)}
       ${usedSaved ? `<p class="small muted">The snow data server didn't answer for some readings, so the last ones saved on
         this phone are shown (marked "saved"). Tap refresh to try again.</p>` : ''}
       <div class="chips" role="group" aria-label="Sort">
@@ -192,6 +227,10 @@ function renderDashboard() {
     const chip = e.target.closest('[data-sort]');
     if (chip) { dash.sort = chip.dataset.sort; draw(); }
     if (e.target.closest('[data-retry]')) refresh();
+    if (e.target.closest('[data-beta-close]')) {
+      try { localStorage.setItem(BETA_DISMISS_KEY, '1'); } catch { /* private mode: hide for now only */ }
+      e.target.closest('.invite')?.remove();
+    }
   });
   app.querySelector('#refresh').addEventListener('click', refresh);
 
@@ -830,6 +869,9 @@ function renderSettings() {
 
         <h2 class="section-title">How the snow score works</h2>
         <section class="card setting" id="score-help"></section>
+
+        <h2 class="section-title">Phone app beta</h2>
+        ${betaInvite(false)}
 
         <h2 class="section-title">Install on your iPhone</h2>
         <section class="card setting">

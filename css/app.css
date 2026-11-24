@@ -169,6 +169,23 @@ h1, h2, h3, p { margin: 0; }
 .banner span { flex: 1; }
 .banner button { border: 0; background: transparent; color: inherit; font-weight: 700; cursor: pointer; padding: 6px 10px; }
 
+/* Phone app closed-beta invitation (dashboard card, settings card) */
+.invite {
+  position: relative; padding: 14px 44px 14px 16px; border-radius: var(--radius);
+  background: var(--primary-soft); color: var(--text); font-size: 14px;
+}
+.invite b { display: block; font-size: 15px; margin-bottom: 2px; }
+.invite p { margin: 0; }
+.invite a { color: var(--primary); font-weight: 600; }
+.invite .btn { margin-top: 10px; padding: 9px 18px; font-size: 14px; color: var(--on-primary); }
+.invite .x {
+  position: absolute; top: 6px; right: 6px; border: 0; background: transparent; cursor: pointer;
+  width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--muted);
+}
+.invite .x svg { width: 20px; height: 20px; fill: currentColor; }
+.content > .invite + .chips, .empty + .invite { margin-top: 12px; }
+.empty + .invite { margin-left: 16px; margin-right: 16px; }
+
 .spinner {
   width: 32px; height: 32px; border-radius: 50%;
   border: 3px solid var(--primary-soft); border-top-color: var(--primary);
