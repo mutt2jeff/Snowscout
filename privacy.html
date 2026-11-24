@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SnowScout Privacy Policy</title>
+  <meta name="description" content="How the SnowScout app and web site handle your information.">
+  <meta name="theme-color" content="#1E4E79">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <style>
+    :root { --bg: #F6F9FC; --surface: #FFFFFF; --text: #14212E; --muted: #5A6B7B;
+            --primary: #1E4E79; --border: #D5DEE7; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0E141B; --surface: #17202A; --text: #E6EDF3; --muted: #9AA9B8;
+              --primary: #9CC7F0; --border: #2A3644; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 4px; color: var(--primary); }
+    h2 { font-size: 1.15rem; margin: 32px 0 8px; }
+    .updated { color: var(--muted); margin: 0 0 24px; }
+    .summary { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+               padding: 16px 20px; }
+    .summary p { margin: 0; }
+    ul { padding-left: 1.25em; }
+    li { margin: 4px 0; }
+    a { color: var(--primary); }
+    table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+    th, td { text-align: left; vertical-align: top; padding: 8px 8px 8px 0;
+             border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; }
+    td:first-child { white-space: nowrap; padding-right: 16px; }
+    @media (max-width: 480px) { td:first-child { white-space: normal; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>SnowScout Privacy Policy</h1>
+  <p class="updated">Last updated November 23, 2026</p>
+
+  <div class="summary">
+    <p><strong>In short:</strong> SnowScout has no accounts and doesn't collect, sell or share
+    your personal information. The sites you save and your settings stay on your phone.</p>
+  </div>
+
+  <p>This policy covers the SnowScout Android app and the SnowScout web site
+  (mutt2jeff.github.io/Snowscout). SnowScout shows snow conditions at weather stations so
+  snowmobilers can see where the best riding snow is.</p>
+
+  <h2>What stays on your device</h2>
+  <ul>
+    <li>The stations you save, your minimum base, alert and display settings.</li>
+    <li>Recent snow readings, saved so the app works when you're out of signal.</li>
+  </ul>
+  <p>This information never leaves your device and isn't sent to us. Uninstalling the app
+  (or clearing the web site's data in your browser) deletes it. On Android, if you have
+  Google backup turned on, Android may include your settings in your own Google backup.</p>
+
+  <h2>What we don't collect</h2>
+  <ul>
+    <li>No accounts, names, email addresses or phone numbers.</li>
+    <li>No location. The app doesn't ask for your location; you pick stations yourself.</li>
+    <li>No advertising, and no advertising or tracking IDs.</li>
+    <li>The Android app has no analytics or crash-reporting services built in.</li>
+  </ul>
+
+  <h2>Where the data comes from</h2>
+  <p>To show conditions, the app downloads public data straight from these services. Like any
+  web request, each one sees your device's IP address and the station location being asked
+  about, and handles it under its own privacy policy. SnowScout doesn't send them anything
+  about you.</p>
+  <table>
+    <tr><th>Service</th><th>Used for</th></tr>
+    <tr><td>USDA NRCS (SNOTEL)</td><td>US snow stations and readings</td></tr>
+    <tr><td>US National Weather Service</td><td>US forecasts and alerts</td></tr>
+    <tr><td>Environment and Climate Change Canada</td><td>Canadian forecasts and warnings</td></tr>
+    <tr><td>Avalanche.org and Avalanche Canada</td><td>Avalanche forecasts</td></tr>
+    <tr><td>US Geological Survey (The National Map)</td><td>Map tiles</td></tr>
+    <tr><td>GitHub Pages (this web site)</td><td>Canadian snow station files, prepared from
+      BC government and Alberta Rivers data</td></tr>
+  </table>
+
+  <h2>Notifications</h2>
+  <p>If you turn on snow alerts, the app checks your saved stations in the background and
+  shows a notification on your phone. The check runs on your device; no push service or
+  server is involved.</p>
+
+  <h2>Web site visit counts</h2>
+  <p>The web site (not the Android app) counts visits with
+  <a href="https://www.goatcounter.com/">GoatCounter</a>. It uses no cookies and stores no
+  personal information: it records which screens are viewed and general details such as
+  browser type, screen size and country, so we can see how many people use the site.</p>
+
+  <h2>Children</h2>
+  <p>SnowScout is meant for adults and isn't directed at children under 13. It doesn't
+  knowingly collect information from anyone, including children.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the new version will be posted on this page with a new date.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy: open an issue at
+  <a href="https://github.com/mutt2jeff/Snowscout/issues">github.com/mutt2jeff/Snowscout/issues</a>.</p>
+</main>
+</body>
+</html>
