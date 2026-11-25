@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Build SNOTEL map data (local)</title>
+  <style>body { font: 15px/1.5 system-ui, sans-serif; margin: 24px; } .fail { color: #B3261E; } .pass { color: #1B5E20; }</style>
+</head>
+<body>
+  <h1>Build SNOTEL map data locally</h1>
+  <p>For testing on this PC only (run <code>serve.ps1 -Dev</code>). Online, the GitHub Action builds
+     <code>data/snotel-latest.json</code> with <code>scripts/build-snotel-data.mjs</code> using the same code.
+     About 23 requests to NRCS, one at a time.</p>
+  <div id="out">Working…</div>
+  <script type="module">
+    import { buildSnotelSummary } from '../js/snotel.js';
+    const AWDB = 'https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1';
+    const out = document.getElementById('out');
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
+    try {
+      const now = Date.now();
+      const get = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
+      const stations = (await get(`${AWDB}/stations?stationTriplets=*:*:SNTL&returnStationElements=false&activeOnly=true`))
+        .filter((s) => !s.networkCode || s.networkCode === 'SNTL');
+      const tz = new Map(stations.map((s) => [s.stationTriplet, s.dataTimeZone ?? -8]));
+      const triplets = stations.map((s) => s.stationTriplet);
+      const responses = [];
+      let failed = 0;
+      for (let i = 0; i < triplets.length; i += 40) {
+        const g = triplets.slice(i, i + 40).join(',');
+        try {
+          responses.push(...await get(`${AWDB}/data?stationTriplets=${g}&elements=SNWD,TOBS&duration=HOURLY&beginDate=${iso(now - 3 * 86400000)}&endDate=${iso(now + 86400000)}`));
+        } catch { failed++; }
+        out.textContent = `Downloading… ${Math.min(i + 40, triplets.length)} of ${triplets.length} stations`;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      const file = buildSnotelSummary(responses, (t) => tz.get(t) ?? -8, now);
+      const body = JSON.stringify(file);
+      const r = await fetch('../data/snotel-latest.json', { method: 'PUT', body });
+      if (!r.ok) throw new Error(`save: ${r.status}`);
+      window.snotelBuild = {
+        stations: stations.length, returned: responses.length, failedRequests: failed,
+        withReadings: Object.keys(file.sites).length, kb: Math.round(body.length / 1024),
+        latest: file.latestReadingMs ? new Date(file.latestReadingMs).toISOString() : null,
+        beartown: file.sites['327:CO:SNTL'] ?? null,
+      };
+      out.className = 'pass';
+      out.textContent = `Built: ${JSON.stringify(window.snotelBuild)}`;
+    } catch (e) {
+      out.className = 'fail';
+      out.textContent = `Failed: ${e.message}`;
+      window.snotelBuild = { error: e.message };
+    }
+  </script>
+</body>
+</html>

@@ -10,6 +10,7 @@ import { load, save } from './store.js';
 import { mergeHours, saveReadings, savedReadings } from './readings.js';
 import { BC_STATE, BC_TZ, bcDays, bcHours, bcTriplet, isBcTriplet } from './bc.js';
 import { AB_STATE, AB_TZ, abTriplet, isAbTriplet } from './ab.js';
+import { SUMMARY_MAX_AGE_MS, mapRating } from './snotel.js';
 
 const AWDB = 'https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1';
 const NWS = 'https://api.weather.gov';
@@ -383,6 +384,53 @@ export async function conditions(triplets, minBase, useHourly = false) {
     }));
 
   return result.sort((a, b) => b.score.score - a.score.score);
+}
+
+// ---- Map colors (F1) -----------------------------------------------------------------
+
+const SNOTEL_SUMMARY_URL = dataFile('snotel-latest.json');
+let mapFilesPromise = null, mapFilesAt = 0;
+const MAP_FILES_REUSE_MS = 15 * 60 * 1000;
+
+/** The shared files behind the map colors, downloaded at most every 15 minutes. */
+function mapFiles() {
+  if (!mapFilesPromise || Date.now() - mapFilesAt > MAP_FILES_REUSE_MS) {
+    mapFilesAt = Date.now();
+    const get = (url) => getJson(url, { cache: 'no-cache' }).catch(() => null);
+    mapFilesPromise = Promise.all([get(SNOTEL_SUMMARY_URL), ...PROVINCES.map((p) => get(p.readingsUrl))]);
+  }
+  return mapFilesPromise;
+}
+
+/**
+ * Snow-score rating for every station the shared files cover, scored with this user's
+ * minimum base: { ratings: Map(triplet -> 'epic'|'good'|'fair'|'marginal'|'nogo'), asOfMs }.
+ * No phone asks NRCS for this: the US numbers come from data/snotel-latest.json, built every
+ * ~3 hours by the GitHub Action, and BC/Alberta from their own shared files. Files missing
+ * or more than 12 hours old are skipped, so those dots stay plain.
+ */
+export async function mapRatings(minBase) {
+  const [snotel, ...provinceFiles] = await mapFiles();
+  const now = Date.now();
+  const ratings = new Map();
+  let asOfMs = null;
+  const fresh = (f) => f && f.generatedMs && now - f.generatedMs < SUMMARY_MAX_AGE_MS;
+  if (fresh(snotel)) {
+    for (const [t, row] of Object.entries(snotel.sites ?? {})) {
+      const k = mapRating(row, minBase);
+      if (k) ratings.set(t, k);
+    }
+    asOfMs = snotel.latestReadingMs ?? snotel.generatedMs;
+  }
+  PROVINCES.forEach((p, i) => {
+    const file = provinceFiles[i];
+    if (!fresh(file)) return;
+    for (const id of Object.keys(file.stations ?? {})) {
+      const s = scoreHourly(bcHours(file, id), bcDays(file, id), now, minBase, p.tz);
+      if (s.depthIn != null && s.rating?.key && s.rating.key !== 'nodata') ratings.set(p.triplet(id), s.rating.key);
+    }
+  });
+  return { ratings, asOfMs };
 }
 
 // ---- Storm check for silent stations -------------------------------------------------

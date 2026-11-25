@@ -5,7 +5,8 @@
 #
 # -Dev also lets tests/build-bc.html and tests/build-ab.html build the BC and Alberta snow
 # files locally (what the GitHub Action does online): it can fetch the provinces' source
-# files and save data/bc-*.json and data/ab-*.json.
+# files and save data/bc-*.json and data/ab-*.json. tests/build-snotel.html saves
+# data/snotel-latest.json (the map's snow colors) the same way.
 
 param([int]$Port = 8765, [switch]$Dev)
 $root = $PSScriptRoot
@@ -52,7 +53,7 @@ try {
         $res.ContentLength64 = $bytes.Length
         $res.OutputStream.Write($bytes, 0, $bytes.Length)
       } catch { $res.StatusCode = 502 }
-    } elseif ($Dev -and $ctx.Request.HttpMethod -eq 'PUT' -and $path -match '^data/(bc|ab)-(stations|readings)\.json$') {
+    } elseif ($Dev -and $ctx.Request.HttpMethod -eq 'PUT' -and $path -match '^data/((bc|ab)-(stations|readings)|snotel-latest)\.json$') {
       # Dev only: save a built BC or Alberta file.
       New-Item -ItemType Directory -Force (Join-Path $root 'data') | Out-Null
       $ms = New-Object IO.MemoryStream

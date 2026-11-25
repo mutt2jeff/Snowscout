@@ -296,6 +296,9 @@ function renderSites() {
   let map = null, markers = null, canvas = null;
   let fitTimer = null, lastFitKey = undefined;
   let previewFor = null;
+  // Snow-score colors for the dots (F1): { ratings: Map(triplet -> rating key), asOfMs, minBase },
+  // or null while loading / when the shared files aren't available (plain dots then).
+  let colors = null;
 
   app.innerHTML = `
     <div class="screen sites-screen">
@@ -317,10 +320,7 @@ function renderSites() {
       <div class="sites-body">
         <div class="map-wrap" id="map-wrap" hidden>
           <div class="map" id="map"></div>
-          <div class="legend" aria-hidden="true">
-            <div><i class="dot" style="background:var(--mine)"></i>My sites</div>
-            <div><i class="dot" style="background:#1E4E79"></i>Snow station</div>
-          </div>
+          <div class="legend" id="legend" aria-hidden="true"></div>
           <div class="card preview" id="preview" hidden></div>
         </div>
         <div class="list" id="list" hidden></div>
@@ -406,22 +406,65 @@ function renderSites() {
     setTimeout(() => map && map.invalidateSize(), 0);
   }
 
+  // Dot colors: the score badge colors (canvas needs real colors, not CSS variables).
+  const css = getComputedStyle(document.documentElement);
+  const RATING_COLOR = Object.fromEntries(['epic', 'good', 'fair', 'marginal', 'nogo']
+    .map((k) => [k, css.getPropertyValue(`--r-${k}`).trim()]));
+  const NO_READING = '#9AA5AF';
+  const PLAIN = '#1E4E79';
+  const RING = '#14212E';
+  const LEGEND = [['epic', 'Epic'], ['good', 'Good'], ['fair', 'Fair'], ['marginal', 'Marginal'], ['nogo', 'No go']];
+
+  function drawLegend() {
+    const el = app.querySelector('#legend');
+    const ring = `<div><i class="dot ring"></i>My sites</div>`;
+    if (!colors) {
+      el.innerHTML = `<div><i class="dot" style="background:${PLAIN}"></i>Snow station</div>${ring}` +
+        (colors === null && colorsFailed ? '<div class="muted">Snow colors unavailable</div>' : '');
+      return;
+    }
+    const when = colors.asOfMs ? shortTime(colors.asOfMs) : '';
+    el.innerHTML =
+      `<div class="legend-grid">${LEGEND.map(([k, label]) => `<div><i class="dot" style="background:${RATING_COLOR[k]}"></i>${label}</div>`).join('')}` +
+      `<div><i class="dot" style="background:${NO_READING}"></i>No reading</div></div>` +
+      `<div class="legend-foot">${ring}<span class="muted">Your ${colors.minBase}" min${when ? ` · ${esc(when)}` : ''}</span></div>`;
+  }
+
+  let colorsFailed = false;
+  async function loadColors() {
+    const { minBase } = getSettings();
+    try {
+      const r = await api.mapRatings(minBase);
+      if (!alive) return;
+      colors = r.ratings.size ? { ...r, minBase } : null;
+      colorsFailed = !colors;
+    } catch {
+      colors = null; colorsFailed = true;
+    }
+    drawLegend();
+    drawMarkers();
+  }
+
   function drawMarkers() {
     if (!map) return;
     markers.clearLayers();
     const sel = new Set(getSettings().selected);
     const items = filtered().filter((s) => s.lat != null && s.lon != null);
-    // Saved sites last, so they draw on top.
-    items.sort((a, b) => Number(sel.has(a.triplet)) - Number(sel.has(b.triplet)));
+    // Stations with readings draw over gray ones, and saved sites on top.
+    const layer = (s) => (sel.has(s.triplet) ? 2 : colors?.ratings.has(s.triplet) ? 1 : 0);
+    items.sort((a, b) => layer(a) - layer(b));
     for (const st of items) {
       const mine = sel.has(st.triplet);
       const isPreview = previewFor === st.triplet;
+      const rating = colors?.ratings.get(st.triplet);
+      const fill = colors ? (rating ? RATING_COLOR[rating] : NO_READING) : PLAIN;
       L.circleMarker([st.lat, st.lon], {
         renderer: canvas,
-        radius: isPreview ? 9 : 6,
-        weight: isPreview ? 3 : 1.5,
-        color: '#FFFFFF',
-        fillColor: mine ? '#F57C00' : '#1E4E79',
+        // Saved sites: bigger, with a dark ring (orange now means a score, so it can't mark them).
+        radius: isPreview ? 10 : mine ? 8 : colors && !rating ? 4.5 : 6,
+        weight: isPreview ? 3 : mine ? 3 : 1.5,
+        color: mine || isPreview ? RING : '#FFFFFF',
+        fillColor: fill,
         fillOpacity: 0.95,
       }).on('click', () => showPreview(st)).addTo(markers);
     }
@@ -528,9 +571,10 @@ function renderSites() {
     else drawList();
   }
 
-  const unsubscribe = onSettingsChange(() => {
+  const unsubscribe = onSettingsChange((s) => {
     drawChips();
     if (picker.mode === 'map') drawMarkers(); else drawList();
+    if (colors && s.minBase !== colors.minBase) loadColors(); // re-score with the new minimum (no new download)
   });
 
   const onKey = (e) => { if (e.key === 'Escape' && previewFor) closePreview(); };
@@ -546,7 +590,9 @@ function renderSites() {
       const missing = api.missingStationLists;
       missingEl.innerHTML = missing.length ? errorBanner(`${missing.join(' and ')} stations couldn't load`) : '';
       drawChips();
+      drawLegend();
       drawMode();
+      loadColors(); // dots start plain and take their colors when the shared files arrive
     } catch (e) {
       if (!alive) return;
       statusEl.innerHTML = `<div style="padding:16px">${errorBanner(e.message)}</div>`;

@@ -19,6 +19,7 @@
     import { score, fullDepthFor, addDays, Rating, RIDEABLE_FLOOR, DEFAULT_MIN_BASE_IN,
              currentFromHourly, scoreHourly, stationTimeToMs, dailyReadingMs, silenceNote } from '../js/scorer.js';
     import { mergeHours } from '../js/readings.js';
+    import { summaryRow, mapRating } from '../js/snotel.js';
     import { parseWideCsv, buildBcData, bcHours, bcDays, bcTriplet, isBcTriplet } from '../js/bc.js';
     import { abTriplet, isAbTriplet, albertaTimeToMs, splitName, isDuplicateOrRetired, snowStations, parseTable, toHourly, buildAbData } from '../js/ab.js';
     import { ecccWarningName, ecccPeriods } from '../js/api.js';
@@ -76,6 +77,20 @@
     test('settling never counts as negative snow', () => {
       const s = score(series([40, 39, 38, 37]), today);
       eq(s.new24In, 0); eq(s.new72In, 0);
+    });
+    test('map summary row: hourly readings -> [depth, new24, new72, temp, time] (F1)', () => {
+      const t0 = Date.UTC(2026, 0, 10, 12);
+      const hours = [];
+      // 6" fell 20 hours ago (inside the last day, clear of the 24-hour baseline window).
+      for (let h = 80; h >= 0; h--) hours.push({ t: t0 - h * 3600000, depth: h > 20 ? 40 : 46, tobs: 20, swe: null });
+      const row = summaryRow(hours, t0 + 30 * 60000);
+      eq(row[0], 46, 'depth'); eq(row[1], 6, 'new24'); eq(row[2], 6, 'new72'); eq(row[3], 20, 'temp'); eq(row[4], t0, 'time');
+    });
+    test('map colors use the rider\'s own minimum base (F1)', () => {
+      const row = [30, 0, 0, 20, 0];
+      eq(mapRating(row, 18), 'fair', '30" with an 18" minimum');
+      eq(mapRating(row, 36), 'nogo', '30" with a 36" minimum');
+      eq(mapRating(null, 18), null, 'no row');
     });
     test('fresh snow on a settling base still counts (B2, Beartown Nov 2026)', () => {
       const s = score(series([50, 44, 40, 45], 28), today);
