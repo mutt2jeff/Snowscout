@@ -96,7 +96,7 @@ function countStation(st) {
 // type and that email. The address is put together here rather than written out, to keep it
 // away from simple scrapers.
 
-const BETA_EMAIL = ['itsjustapp', 'gmail.com'].join('@');
+const BETA_EMAIL = ['support', 'stashfinder.app'].join('@'); // forwards to the developer Gmail (Cloudflare Email Routing)
 const BETA_DISMISS_KEY = 'ss.betaInviteDismissed.v2';
 
 function betaMailto() {
