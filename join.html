@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Join the Stashfinder beta</title>
+  <meta name="description" content="Test the Stashfinder backcountry snow app on Android.">
+  <meta property="og:title" content="Join the Stashfinder beta">
+  <meta property="og:description" content="Two taps to test the Stashfinder backcountry snow app on Android.">
+  <meta name="theme-color" content="#1E4E79">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <style>
+    :root { --bg: #F6F9FC; --surface: #FFFFFF; --text: #14212E; --muted: #5A6B7B;
+            --primary: #1E4E79; --on-primary: #FFFFFF; --border: #D5DEE7; --warn-bg: #FFF4E5; --warn: #8A4B00; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0E141B; --surface: #17202A; --text: #E6EDF3; --muted: #9AA9B8;
+              --primary: #9CC7F0; --on-primary: #0A2540; --border: #2A3644; --warn-bg: #3A2A12; --warn: #FFCC80; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 560px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 4px; color: var(--primary); }
+    .lead { color: var(--muted); margin: 0 0 20px; }
+    .step { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin: 12px 0; }
+    .step h2 { font-size: 1.05rem; margin: 0 0 6px; }
+    .step p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
+    .btn { display: block; text-align: center; padding: 14px 18px; border-radius: 999px; background: var(--primary);
+           color: var(--on-primary); font-weight: 700; text-decoration: none; font-size: 17px; }
+    .note { background: var(--warn-bg); color: var(--warn); border-radius: 12px; padding: 12px 14px; font-size: 15px; margin: 12px 0; }
+    .small { font-size: 14px; color: var(--muted); }
+    a { color: var(--primary); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Join the Stashfinder beta</h1>
+  <p class="lead">Thanks for helping test Stashfinder, the backcountry snow app. It takes two taps on your Android phone.</p>
+
+  <div class="note" id="inapp" hidden>
+    You're in Facebook Messenger's built-in browser, which isn't signed in to Google. The buttons below open
+    <strong>Chrome</strong> and the <strong>Play Store</strong> instead, where you are.
+  </div>
+
+  <div class="note" id="iphone" hidden>
+    This beta is for <strong>Android</strong>. The iPhone beta comes through Apple's TestFlight app: email
+    <a href="#" id="mail-iphone">support@stashfinder.app</a> with your Apple ID email to get on the list.
+  </div>
+
+  <section class="step">
+    <h2>1. Become a tester</h2>
+    <p>Opens Google Play's test page. Make sure it shows the Gmail address you gave me, then tap
+       <strong>Become a tester</strong>.</p>
+    <a class="btn" id="optin" href="https://play.google.com/apps/testing/com.snowscout.app">Open the tester page</a>
+  </section>
+
+  <section class="step">
+    <h2>2. Install Stashfinder</h2>
+    <p>Opens Stashfinder in the Play Store app. If it says the app isn't available, wait a few minutes after step 1
+       and try again.</p>
+    <a class="btn" id="install" href="https://play.google.com/store/apps/details?id=com.snowscout.app">Open in Play Store</a>
+  </section>
+
+  <p class="small" id="manual">Buttons not working? Tap <strong>⋮</strong> (top right) and choose
+     <strong>Open in Chrome</strong> or <strong>Open in browser</strong>, then try again.</p>
+
+  <p class="small"><strong>Please stay in the test for at least 2 weeks</strong> and keep the app installed. Google needs
+     at least 12 testers for 14 days in a row before Stashfinder can go public. Questions:
+     <a href="#" id="mail">support@stashfinder.app</a>.</p>
+</main>
+<script>
+  (function () {
+    var ua = navigator.userAgent || '';
+    var android = /Android/i.test(ua);
+    var ios = /iPhone|iPad|iPod/i.test(ua);
+    // Facebook, Messenger and Instagram in-app browsers (and Android "wv" web views).
+    var inApp = /FBAN|FBAV|FB_IAB|FBIOS|Messenger|Instagram/i.test(ua) || (android && /; wv\)/.test(ua));
+    var optin = 'https://play.google.com/apps/testing/com.snowscout.app';
+    var store = 'https://play.google.com/store/apps/details?id=com.snowscout.app';
+    var addr = ['support', 'stashfinder.app'].join('@');
+    ['mail', 'mail-iphone'].forEach(function (id) {
+      var a = document.getElementById(id);
+      a.href = 'mailto:' + addr + '?subject=' + encodeURIComponent('Stashfinder beta');
+      a.textContent = addr;
+    });
+    if (ios) document.getElementById('iphone').hidden = false;
+    if (android) {
+      // Step 1 in Chrome, which is signed in to the phone's Google account. If Chrome isn't
+      // installed, Android falls back to the normal link.
+      document.getElementById('optin').href = 'intent://play.google.com/apps/testing/com.snowscout.app' +
+        '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(optin) + ';end';
+      document.getElementById('optin').textContent = 'Open the tester page in Chrome';
+      // Step 2 straight into the Play Store app.
+      document.getElementById('install').href = 'intent://details?id=com.snowscout.app' +
+        '#Intent;scheme=market;package=com.android.vending;S.browser_fallback_url=' + encodeURIComponent(store) + ';end';
+    }
+    document.getElementById('inapp').hidden = !inApp;
+    document.getElementById('manual').hidden = !inApp;
+  })();
+</script>
+</body>
+</html>
