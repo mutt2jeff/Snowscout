@@ -420,7 +420,9 @@ export async function mapRatings(minBase) {
       const k = mapRating(row, minBase);
       if (k) ratings.set(t, k);
     }
-    asOfMs = snotel.latestReadingMs ?? snotel.generatedMs;
+    // When the file was built. (Not the newest reading: NRCS labels an hour by its end, and
+    // some stations post it a few minutes early, which would read as a time in the future.)
+    asOfMs = snotel.generatedMs;
   }
   PROVINCES.forEach((p, i) => {
     const file = provinceFiles[i];

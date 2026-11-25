@@ -427,7 +427,7 @@ function renderSites() {
     el.innerHTML =
       `<div class="legend-grid">${LEGEND.map(([k, label]) => `<div><i class="dot" style="background:${RATING_COLOR[k]}"></i>${label}</div>`).join('')}` +
       `<div><i class="dot" style="background:${NO_READING}"></i>No reading</div></div>` +
-      `<div class="legend-foot">${ring}<span class="muted">Your ${colors.minBase}" min${when ? ` · ${esc(when)}` : ''}</span></div>`;
+      `<div class="legend-foot">${ring}<span class="muted">Your ${colors.minBase}" min${when ? ` · updated ${esc(when)}` : ''}</span></div>`;
   }
 
   let colorsFailed = false;
