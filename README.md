@@ -1,4 +1,4 @@
-# Stashfinder web (formerly SnowScout)
+# StashFinder web (formerly SnowScout)
 
 The iPhone-friendly version of SnowScout. It runs in Safari (or any browser) and can be added
 to the home screen like an app. No Mac, no App Store, no fees.

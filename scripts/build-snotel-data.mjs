@@ -13,7 +13,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { buildSnotelSummary } from '../js/snotel.js';
 
 const OUT_DIR = new URL('../data/', import.meta.url);
-const UA = 'Stashfinder/1.0 (backcountry snow-conditions app; GitHub Pages)';
+const UA = 'StashFinder/1.0 (backcountry snow-conditions app; GitHub Pages)';
 const AWDB = 'https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1';
 const BATCH = 40;
 const GAP_MS = 1000;                       // pause between requests: be polite to NRCS
