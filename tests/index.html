@@ -20,6 +20,7 @@
              currentFromHourly, scoreHourly, stationTimeToMs, dailyReadingMs, silenceNote } from '../js/scorer.js';
     import { mergeHours } from '../js/readings.js';
     import { summaryRow, mapRating } from '../js/snotel.js';
+    import { matchesSearch, normalizeSearch } from '../js/search.js';
     import { parseWideCsv, buildBcData, bcHours, bcDays, bcTriplet, isBcTriplet } from '../js/bc.js';
     import { abTriplet, isAbTriplet, albertaTimeToMs, splitName, isDuplicateOrRetired, snowStations, parseTable, toHourly, buildAbData } from '../js/ab.js';
     import { ecccWarningName, ecccPeriods } from '../js/api.js';
@@ -77,6 +78,19 @@
     test('settling never counts as negative snow', () => {
       const s = score(series([40, 39, 38, 37]), today);
       eq(s.new24In, 0); eq(s.new72In, 0);
+    });
+    test('station search ignores extra spaces, case, punctuation and word order', () => {
+      const red = { id: '713', name: 'Red Mountain Pass', county: 'San Juan' };
+      const aly = { id: '1103', name: 'Mt. Alyeska', county: 'Anchorage' };
+      const ward = { id: '848', name: 'Ward Creek #3', county: 'Placer' };
+      for (const q of ['Red Mountain Pass', 'red  mountain', ' RED mountain ', 'pass red mountain', 'red mtn'.replace('mtn', 'mountain'), 'san juan red']) {
+        ok(matchesSearch(red, q), `"${q}" should find Red Mountain Pass`);
+      }
+      ok(matchesSearch(aly, 'mt alyeska'), 'mt alyeska'); ok(matchesSearch(aly, 'Mt. Alyeska'), 'Mt. Alyeska');
+      ok(matchesSearch(ward, 'ward creek 3'), 'ward creek 3'); ok(matchesSearch(ward, 'Ward Creek #3'), '#3');
+      ok(matchesSearch(red, '713'), 'station number'); ok(!matchesSearch(red, 'red wolf'), 'every word must match');
+      ok(matchesSearch(red, '   '), 'blank query matches everything');
+      eq(normalizeSearch('  Mt.  Rose—Ski  Área '), 'mt rose ski area');
     });
     test('map summary row: hourly readings -> [depth, new24, new72, temp, time] (F1)', () => {
       const t0 = Date.UTC(2026, 0, 10, 12);

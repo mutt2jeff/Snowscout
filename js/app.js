@@ -3,6 +3,7 @@
 // site detail (chart, forecast, daily table), settings (minimum base).
 
 import * as api from './api.js';
+import { matchesSearch } from './search.js';
 import { avalancheForecast, DANGER, US_HOME, CA_HOME } from './avalanche.js';
 import { getSettings, updateSettings, onSettingsChange, toggleSite, isSelected, removeSite, restoreSite, MAX_SITES } from './store.js';
 import { MIN_BASE_RANGE, RIDEABLE_FLOOR, FULL_FRESH_IN, fullDepthFor, addDays, shortTime } from './scorer.js';
@@ -345,13 +346,11 @@ function renderSites() {
   const narrowed = () => picker.query.trim() !== '' || picker.state != null || picker.mineOnly;
 
   function filtered() {
-    const term = picker.query.trim().toLowerCase();
     const sel = new Set(getSettings().selected);
     return stations.filter((st) =>
       (picker.state == null || st.state === picker.state) &&
       (!picker.mineOnly || sel.has(st.triplet)) &&
-      (term === '' || st.name.toLowerCase().includes(term) ||
-        (st.county ?? '').toLowerCase().includes(term) || st.id.toLowerCase() === term));
+      matchesSearch(st, picker.query));
   }
 
   function drawChips() {
