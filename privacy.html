@@ -38,7 +38,7 @@
 <body>
 <main>
   <h1>StashFinder Privacy Policy</h1>
-  <p class="updated">Last updated November 24, 2026</p>
+  <p class="updated">Last updated November 25, 2026</p>
 
   <div class="summary">
     <p><strong>In short:</strong> StashFinder has no accounts and doesn't collect, sell or share
@@ -56,7 +56,9 @@
     <li>The stations you save, your minimum base, alert and display settings.</li>
     <li>Recent snow readings, saved so the app works when you're out of signal.</li>
   </ul>
-  <p>This information never leaves your device and isn't sent to us. Uninstalling the app
+  <p>This information never leaves your device and isn't sent to us (apart from the anonymous
+  daily counts described below, which include how many stations you've saved but never which
+  ones). Uninstalling the app
   (or clearing the web site's data in your browser) deletes it. On Android, if you have
   Google backup turned on, Android may include your settings in your own Google backup.</p>
 
@@ -65,8 +67,25 @@
     <li>No accounts, names, email addresses or phone numbers.</li>
     <li>No location. The app doesn't ask for your location; you pick stations yourself.</li>
     <li>No advertising, and no advertising or tracking IDs.</li>
-    <li>The Android app has no analytics or crash-reporting services built in.</li>
+    <li>No third-party analytics or crash-reporting services (no Google Analytics, Firebase or
+      similar) in the Android app.</li>
   </ul>
+
+  <h2>Anonymous usage counts (Android app)</h2>
+  <p>From version 0.3.4, the Android app sends one small, anonymous report about once a day,
+  so we can see how the app is used and decide what to improve. It contains only:</p>
+  <ul>
+    <li>how many stations you've saved, and how many of them are in the US and in Canada;</li>
+    <li>whether fresh-snow alerts are turned on;</li>
+    <li>the app version, and that it's the Android app.</li>
+  </ul>
+  <p>It never contains your name, email, location, which stations you've saved, or any ID,
+  so a report can't be traced back to you or your phone. The reports go to a small counter
+  we run on Cloudflare, which adds them to daily totals (for example, "40 phones had 1 to 8
+  stations saved") and keeps nothing else. Your IP address is not stored. The counts aren't
+  shared or sold.</p>
+  <p>The app tells you about this the first time you open it. You can turn it off any time in
+  <strong>Settings › Send anonymous usage counts</strong>; once it's off, nothing more is sent.</p>
 
   <h2>Where the data comes from</h2>
   <p>To show conditions, the app downloads public data straight from these services. Like any
